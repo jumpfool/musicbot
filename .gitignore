@@ -1,8 +1,13 @@
-.env
-*.session
-*.session-journal
+# .gitignore
+venv/
+.venv/
 __pycache__/
 *.pyc
-/tmp/
-*.log
-.DS_Store
+.env
+/tmp/music_cache/
+*.mp3
+*.m4a
+*.webm
+sessions/
+*.session
+*.session-journal

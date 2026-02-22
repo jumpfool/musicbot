@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/data/workspace/musicbot/bot.py", line 1, in <module>
+    from musicbot.core import app, user, calls, logger
+  File "/data/workspace/musicbot/musicbot/core.py", line 2, in <module>
+    from pyrogram import Client
+ModuleNotFoundError: No module named 'pyrogram'

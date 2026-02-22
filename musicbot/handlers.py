@@ -99,6 +99,7 @@ async def start(_, m: Message):
         "• /resume\n"
         "• /stop\n"
         "• /queue\n"
+        "• /nowplaying\n"
         "• /speedup (admin)\n"
         "• /slowed (admin)\n"
         "• /radio [n] - add n similar tracks (one-time)\n"
@@ -123,6 +124,7 @@ async def help_cb(_, q: CallbackQuery):
         "`/resume` - resume\n"
         "`/stop` - stop\n"
         "`/queue` - view queue\n"
+        "`/nowplaying` - show current track with progress\n"
         "`/speedup` - pitch up & speed up (admin only)\n"
         "`/slowed` - pitch down & slow down (admin only)\n"
         "`/radio [n]` - add n similar tracks immediately\n"
@@ -348,6 +350,36 @@ async def queue(_, m: Message):
         text += "empty"
     await m.reply(text)
 
+@app.on_message(filters.command("nowplaying"))
+async def nowplaying(_, m: Message):
+    uid = m.from_user.id if m.from_user else None
+    if uid and is_banned(uid):
+        return
+    cid = m.chat.id
+    if uid == ADMIN_ID and len(m.command) > 1:
+        try:
+            target_chat = await app.get_chat(m.command[1])
+            cid = target_chat.id
+        except:
+            pass
+    if cid not in active:
+        return await m.reply("nothing playing")
+    state = active[cid]
+    from musicbot.utils import format_duration, get_current_orig_position
+    cur_pos = get_current_orig_position(state)
+    duration = state.get('duration', 0)
+    progress = f"{format_duration(int(cur_pos))} / {format_duration(duration)}" if duration else "live"
+    text = (
+        "**now playing**\n\n"
+        f"**song:** {state.get('title', 'unknown').lower()}\n"
+        f"**artist:** {state.get('artist', 'unknown').lower()}\n"
+        f"**progress:** {progress}\n"
+    )
+    if state.get('play_factor', 1.0) != 1.0:
+        speed = "speedup" if state['play_factor'] > 1.0 else "slowed"
+        text += f"**effect:** {speed}\n"
+    await m.reply(text)
+
 @app.on_message(filters.command("radio"))
 async def radio_handler(_, m: Message):
     uid = m.from_user.id if m.from_user else None
@@ -370,7 +402,11 @@ async def radio_handler(_, m: Message):
     if cid in active:
         seed_vid = video_id_from_url(active[cid].get("webpage"))
     if not seed_vid and queues.get(cid):
-        seed_vid = video_id_from_url(queues[cid][0].get("webpage"))
+        # Find first non-pending item with a webpage
+        for item in queues[cid]:
+            if not item.get("is_pending") and item.get("webpage"):
+                seed_vid = video_id_from_url(item["webpage"])
+                break
         
     if not seed_vid:
         return await m.reply("play a song first to start radio")
@@ -380,23 +416,27 @@ async def radio_handler(_, m: Message):
     try:
         # Fetch IDs (flat extract)
         # Fetch slightly more to filter duplicates
-        ids = await asyncio.to_thread(fetch_radio_ids, seed_vid, count + 5)
+        ids = await asyncio.to_thread(fetch_radio_ids, seed_vid, count + 10)
         if not ids:
             return await msg.edit("no similar tracks found")
             
         # Filter duplicates & current song
-        # YouTube Mix usually starts with the seed video, so we skip items that match seed_vid
         final_ids = []
         seen = set()
         
+        # Add current playing video to seen
+        if cid in active:
+            curr_v = video_id_from_url(active[cid].get("webpage"))
+            if curr_v: seen.add(curr_v)
+            
         # Add current queue videos to seen to avoid immediate duplicates
         if cid in queues:
             for item in queues[cid]:
-                u = item.get("webpage", "")
-                v = video_id_from_url(u)
+                u = item.get("webpage") or item.get("url")
+                v = video_id_from_url(u) if u else None
                 if v: seen.add(v)
         
-        seen.add(seed_vid) # Don't re-add current playing song
+        seen.add(seed_vid) # Don't re-add seed
         
         for vid in ids:
             if vid not in seen:
@@ -420,7 +460,7 @@ async def radio_handler(_, m: Message):
             
         queues.setdefault(cid, []).extend(pending_items)
         
-        await msg.edit(f"added {len(final_ids)} tracks to queue. downloading in background...")
+        await msg.edit(f"added {len(final_ids)} tracks to queue. downloading...")
         
         # Start background download task
         asyncio.create_task(process_radio_batch(pending_items))
