@@ -62,7 +62,7 @@ def video_id_from_url(url: str):
     if not url:
         return None
     # common patterns: v=VIDEO_ID, youtu.be/VIDEO_ID, /watch?v=VIDEO_ID
-    m = re.search(r"(?:v=|youtu\\.be/|/watch\\?v=)([0-9A-Za-z_-]{11})", url)
+    m = re.search(r"(?:v=|youtu\.be/|/watch\?v=)([0-9A-Za-z_-]{11})", url)
     if m:
         return m.group(1)
     # fallback: try to find any 11-char candidate
@@ -525,6 +525,7 @@ async def help_cb(_, q: CallbackQuery):
         "`/queue` - view queue\n"
         "`/speedup` - pitch up & speed up (admin only)\n"
         "`/slowed` - pitch down & slow down (admin only)\n"
+        "`/radio` - toggle radio mode (auto-queue similar tracks)\n"
     )
     await q.message.reply(help_text)
 
@@ -885,6 +886,7 @@ async def radio_handler(_, m: Message):
         except:
             pass
 
+
 @calls.on_stream_end()
 async def on_end(_, u: Update):
     logger.info(f"Stream ended in {u.chat_id}")
@@ -954,8 +956,8 @@ async def speedup_handler(_, m: Message):
             ru = m.reply_to_message.from_user
             mention = f"[{ru.first_name}](tg://user?id={ru.id})"
             await m.reply(f"{mention} sped up", parse_mode="markdown")
-    else:
-        await m.reply("speedup applied")
+        else:
+            await m.reply("speedup applied")
         logger.info(f"Applied speedup in {cid}: {out} (seek {cur_pos}s)")
     except Exception as e:
         try:
