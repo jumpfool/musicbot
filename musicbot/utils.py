@@ -14,7 +14,7 @@ from pytgcalls.types import AudioPiped
 from pytgcalls.types.input_stream.quality import HighQualityAudio
 
 from musicbot.config import DOWNLOADS_DIR, RADIO_BATCH
-from musicbot.state import queues, active, radio_mode, ban_users
+from musicbot.state import queues, active, ban_users
 from musicbot.core import app, user, calls, logger
 
 def video_id_from_url(url: str):
@@ -88,35 +88,31 @@ def download_audio(q):
             "duration": i.get("duration", 0),
             "thumb": i.get("thumbnail") or "https://telegra.ph/file/2f7debf856695e0a17296.png",
             "webpage": i.get("webpage_url", ""),
+            "is_pending": False
         }
 
-async def ensure_radio_filled(cid):
-    if cid not in radio_mode:
-        return
-    if cid not in queues:
-        queues[cid] = []
-    if len(queues[cid]) >= 5:
-        return
-    seed_vid = None
-    if cid in active:
-        seed_vid = video_id_from_url(active[cid].get("webpage"))
-    if not seed_vid and queues[cid]:
-        seed_vid = video_id_from_url(queues[cid][0].get("webpage"))
-    if not seed_vid:
-        return
-    try:
-        ids = await asyncio.to_thread(fetch_radio_ids, seed_vid, RADIO_BATCH)
-        for vid in ids:
-            if len(queues[cid]) >= 200:
-                break
+async def process_radio_batch(items):
+    """
+    Background worker to download items 2 at a time.
+    Updates the dictionaries in-place.
+    """
+    sem = asyncio.Semaphore(2)
+
+    async def worker(item):
+        async with sem:
             try:
-                url = f"https://www.youtube.com/watch?v={vid}"
-                song = await asyncio.to_thread(download_audio, url)
-                queues[cid].append(song)
+                # If item is cancelled or no longer needed, we could check here
+                info = await asyncio.to_thread(download_audio, item['url'])
+                item.update(info)
+                item['is_pending'] = False
             except Exception as e:
-                logger.warning(f"radio download failed for {vid}: {e}")
-    except Exception as e:
-        logger.error(f"ensure_radio_filled error for {cid}: {e}")
+                logger.error(f"Failed to download pending radio item {item['url']}: {e}")
+                item['title'] = "Error loading track"
+                item['is_pending'] = False
+                item['file'] = None
+
+    tasks = [worker(i) for i in items]
+    await asyncio.gather(*tasks)
 
 def is_banned(uid):
     try:
@@ -163,13 +159,14 @@ async def send_now_playing(cid, song, queue_list):
     caption = (
         "**now playing**\n\n"
         f"**song :** {song['title']}\n"
-        f"**artist :** {song['artist']}\n"
-        f"**duration :** {format_duration(song['duration'])}\n\n"
+        f"**artist :** {song.get('artist', 'unknown')}\n"
+        f"**duration :** {format_duration(song.get('duration', 0))}\n\n"
     )
     if queue_list:
         caption += "**up next:**\n\n"
         for i, s in enumerate(queue_list[:5], 1):
-            caption += f"{i}. {s['title']}\n"
+            t = s.get('title', 'loading...')
+            caption += f"{i}. {t}\n"
         if len(queue_list) > 5:
             caption += f"\n_plus {len(queue_list) - 5} more_"
     buttons = InlineKeyboardMarkup(
@@ -264,7 +261,28 @@ async def play_next(cid):
         if cid in active:
             del active[cid]
         return
+    
+    # Peek first item
+    s = queues[cid][0]
+    
+    # Wait if pending
+    while s.get("is_pending"):
+        await asyncio.sleep(1)
+        # Re-check queue existence in case cleared
+        if cid not in queues or not queues[cid]:
+            return
+        # If item removed/changed, update ref
+        s = queues[cid][0]
+
+    # Pop ready item
     s = queues[cid].pop(0)
+
+    # Check if failed
+    if not s.get("file"):
+        logger.warning(f"Skipping failed/pending item in {cid}")
+        await play_next(cid)
+        return
+
     try:
         state = _init_active_state_for_song(s)
         stream = AudioPiped(state["file"], HighQualityAudio())
@@ -272,10 +290,6 @@ async def play_next(cid):
         active[cid] = state
         await send_now_playing(cid, state, queues.get(cid, []))
         logger.info(f"Playing: {state['title']}")
-        try:
-            await ensure_radio_filled(cid)
-        except Exception as e:
-            logger.warning(f"ensure_radio_filled failed in play_next for {cid}: {e}")
     except Exception as e:
         logger.error(f"play next error: {e}")
         await play_next(cid)

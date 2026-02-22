@@ -8,12 +8,12 @@ from pytgcalls.exceptions import GroupCallNotFound
 
 from musicbot.config import ADMIN_ID, RADIO_BATCH
 from musicbot.core import app, calls, logger
-from musicbot.state import active, queues, ban_users, radio_mode
+from musicbot.state import active, queues, ban_users
 from musicbot.utils import (
     is_banned, play_next, download_audio, ensure_assistant_joined,
     send_now_playing, _init_active_state_for_song, video_id_from_url,
     fetch_radio_ids, get_current_orig_position, _make_transformed_filename,
-    _run_ffmpeg_transform_seek_orig, search_youtube
+    _run_ffmpeg_transform_seek_orig, search_youtube, process_radio_batch
 )
 
 @app.on_callback_query()
@@ -101,7 +101,7 @@ async def start(_, m: Message):
         "• /queue\n"
         "• /speedup (admin)\n"
         "• /slowed (admin)\n"
-        "• /radio - toggle radio mode (auto-queue similar tracks)\n"
+        "• /radio [n] - add n similar tracks (one-time)\n"
     )
     try:
         await m.reply_photo("https://telegra.ph/file/2f7debf856695e0a17296.png", caption=text, reply_markup=buttons)
@@ -125,7 +125,7 @@ async def help_cb(_, q: CallbackQuery):
         "`/queue` - view queue\n"
         "`/speedup` - pitch up & speed up (admin only)\n"
         "`/slowed` - pitch down & slow down (admin only)\n"
-        "`/radio` - toggle radio mode (auto-queue similar tracks)\n"
+        "`/radio [n]` - add n similar tracks immediately\n"
     )
     await q.message.reply(help_text)
 
@@ -342,7 +342,8 @@ async def queue(_, m: Message):
     text = "**queue**\n\n"
     if cid in queues and queues[cid]:
         for i, s in enumerate(queues[cid], 1):
-            text += f"{i}. {s['title'].lower()}\n"
+            t = s.get('title', 'loading...')
+            text += f"{i}. {t.lower()}\n"
     else:
         text += "empty"
     await m.reply(text)
@@ -352,76 +353,81 @@ async def radio_handler(_, m: Message):
     uid = m.from_user.id if m.from_user else None
     if uid and is_banned(uid):
         return
-    parts = m.text.split(None, 1)
+    
+    parts = m.text.split()
+    count = 10
+    
+    # Parse args: /radio [count]
+    if len(parts) > 1 and parts[1].isdigit():
+        count = int(parts[1])
+        if count < 1: count = 1
+        if count > 50: count = 50
+
     cid = m.chat.id
-    if len(parts) > 1 and uid == ADMIN_ID:
-        try:
-            target = await app.get_chat(parts[1])
-            cid = target.id
-        except Exception:
-            pass
-    if cid in radio_mode:
-        radio_mode.remove(cid)
-        await m.reply("radio disabled for this chat")
-        return
-    radio_mode.add(cid)
-    queues.setdefault(cid, [])
-    progress_msg = await m.reply("radio: fetching similar tracks...")
+    
+    # Determine seed
     seed_vid = None
     if cid in active:
         seed_vid = video_id_from_url(active[cid].get("webpage"))
     if not seed_vid and queues.get(cid):
         seed_vid = video_id_from_url(queues[cid][0].get("webpage"))
+        
     if not seed_vid:
-        radio_mode.discard(cid)
-        await progress_msg.edit("cannot enable radio: no reference youtube track found. start playing a youtube song first.")
-        return
+        return await m.reply("play a song first to start radio")
+        
+    msg = await m.reply(f"fetching {count} similar tracks...")
+    
     try:
-        ids = await asyncio.to_thread(fetch_radio_ids, seed_vid, RADIO_BATCH)
+        # Fetch IDs (flat extract)
+        # Fetch slightly more to filter duplicates
+        ids = await asyncio.to_thread(fetch_radio_ids, seed_vid, count + 5)
         if not ids:
-            radio_mode.discard(cid)
-            await progress_msg.edit("radio: no similar tracks found")
-            return
-        added_titles = []
-        total = len(ids)
-        for idx, vid in enumerate(ids, 1):
-            if cid not in radio_mode:
+            return await msg.edit("no similar tracks found")
+            
+        # Filter duplicates & current song
+        # YouTube Mix usually starts with the seed video, so we skip items that match seed_vid
+        final_ids = []
+        seen = set()
+        
+        # Add current queue videos to seen to avoid immediate duplicates
+        if cid in queues:
+            for item in queues[cid]:
+                u = item.get("webpage", "")
+                v = video_id_from_url(u)
+                if v: seen.add(v)
+        
+        seen.add(seed_vid) # Don't re-add current playing song
+        
+        for vid in ids:
+            if vid not in seen:
+                final_ids.append(vid)
+                seen.add(vid)
+            if len(final_ids) >= count:
                 break
-            skip = False
-            for q in queues.get(cid, []):
-                wp = (q.get("webpage") or "")
-                if wp.endswith(vid) or vid in wp:
-                    skip = True
-                    break
-            if skip:
-                await progress_msg.edit(f"radio: added {len(added_titles)}/{total} (skipping duplicate)\n\n" + ("\n".join(added_titles[-10:]) or ""))
-                continue
-            url = f"https://www.youtube.com/watch?v={vid}"
-            try:
-                song = await asyncio.to_thread(download_audio, url)
-                queues[cid].append(song)
-                title_lower = (song.get("title") or "unknown").lower()
-                added_titles.append(title_lower)
-                last_list = "\n".join(f"{i}. {t}" for i, t in enumerate(added_titles[-10:], start=max(1, len(added_titles)-9)))
-                await progress_msg.edit(f"radio: added {len(added_titles)}/{total}\n\n{last_list}")
-            except Exception as e:
-                logger.warning(f"radio download failed for {vid}: {e}")
-                await progress_msg.edit(f"radio: added {len(added_titles)}/{total} (errors may have occurred)\n\n" + ("\n".join(added_titles[-10:]) or ""))
-            await asyncio.sleep(1)
-        if cid in radio_mode:
-            if added_titles:
-                await progress_msg.edit(f"radio enabled — added {len(added_titles)} tracks to queue")
-            else:
-                await progress_msg.edit("radio enabled — no tracks were added")
-        else:
-            await progress_msg.edit("radio disabled during seeding")
+                
+        if not final_ids:
+            return await msg.edit("no new tracks found (duplicates skipped)")
+            
+        # Create pending items
+        pending_items = []
+        for vid in final_ids:
+            pending_items.append({
+                "title": "loading...",
+                "url": f"https://www.youtube.com/watch?v={vid}",
+                "is_pending": True,
+                "file": None
+            })
+            
+        queues.setdefault(cid, []).extend(pending_items)
+        
+        await msg.edit(f"added {len(final_ids)} tracks to queue. downloading in background...")
+        
+        # Start background download task
+        asyncio.create_task(process_radio_batch(pending_items))
+        
     except Exception as e:
-        radio_mode.discard(cid)
-        logger.error(f"radio_handler seed failed: {e}")
-        try:
-            await progress_msg.edit("radio failed to fetch tracks")
-        except:
-            pass
+        logger.error(f"radio error: {e}")
+        await msg.edit(f"error: {e}")
 
 @calls.on_stream_end()
 async def on_end(_, u: Update):
