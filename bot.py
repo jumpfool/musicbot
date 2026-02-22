@@ -488,9 +488,9 @@ async def start(_, m: Message):
     )
 
     text = (
-        "**Music Bot**\n\n"
-        "Use /play to start streaming.\n\n"
-        "Commands:\n"
+        "**music bot**\n\n"
+        "use /play to start streaming.\n\n"
+        "commands:\n"
         "• /play [song]\n"
         "• /skip\n"
         "• /pause\n"
@@ -499,6 +499,7 @@ async def start(_, m: Message):
         "• /queue\n"
         "• /speedup (admin)\n"
         "• /slowed (admin)\n"
+        "• /radio - toggle radio mode (auto-queue similar tracks)\n"
     )
 
     try:
@@ -775,10 +776,10 @@ async def queue(_, m: Message):
 @app.on_message(filters.command("radio"))
 async def radio_handler(_, m: Message):
     """
-    Toggle radio mode for the chat. When enabled, similar tracks will be fetched
-    and appended to the queue automatically.
-    Usage: /radio
-    Admins can target a specific group by providing its username/id as the first argument.
+    toggle radio mode for the chat. when enabled, similar tracks will be fetched
+    and appended to the queue immediately. usage: /radio
+    admins can target a specific group by providing its username/id as the first argument.
+    all user-visible text is lowercase.
     """
     uid = m.from_user.id if m.from_user else None
     if uid and is_banned(uid):
@@ -795,17 +796,94 @@ async def radio_handler(_, m: Message):
             # if parsing target fails, keep using current chat
             pass
 
+    # if already enabled -> disable
     if cid in radio_mode:
         radio_mode.remove(cid)
-        await m.reply("Radio mode disabled for this chat.")
-    else:
-        radio_mode.add(cid)
-        await m.reply("Radio mode enabled — fetching similar tracks into the queue.")
-        # attempt to seed the queue immediately
+        await m.reply("radio disabled for this chat")
+        return
+
+    # enable radio and immediately seed the queue with similar tracks.
+    radio_mode.add(cid)
+    # create or ensure queue exists
+    queues.setdefault(cid, [])
+
+    # send initial progress message (lowercase)
+    progress_msg = await m.reply("radio: fetching similar tracks...")
+
+    # determine seed video id: prefer active track, then first queued item
+    seed_vid = None
+    if cid in active:
+        seed_vid = video_id_from_url(active[cid].get("webpage"))
+    if not seed_vid and queues.get(cid):
+        seed_vid = video_id_from_url(queues[cid][0].get("webpage"))
+
+    if not seed_vid:
+        # nothing to seed from; disable radio and inform user
+        radio_mode.discard(cid)
+        await progress_msg.edit("cannot enable radio: no reference youtube track found. start playing a youtube song first.")
+        return
+
+    try:
+        # fetch a batch of candidate ids
+        ids = await asyncio.to_thread(fetch_radio_ids, seed_vid, RADIO_BATCH)
+        if not ids:
+            radio_mode.discard(cid)
+            await progress_msg.edit("radio: no similar tracks found")
+            return
+
+        added_titles = []
+        total = len(ids)
+
+        for idx, vid in enumerate(ids, 1):
+            # if user disabled radio mid-seed, stop
+            if cid not in radio_mode:
+                break
+
+            # basic dedupe: skip if same id already in queue (by webpage/id)
+            skip = False
+            for q in queues.get(cid, []):
+                wp = (q.get("webpage") or "")
+                if wp.endswith(vid) or vid in wp:
+                    skip = True
+                    break
+            if skip:
+                # update progress message to reflect skip
+                await progress_msg.edit(f"radio: added {len(added_titles)}/{total} (skipping duplicate)\n\n" + ("\n".join(added_titles[-10:]) or ""))
+                continue
+
+            url = f"https://www.youtube.com/watch?v={vid}"
+            try:
+                song = await asyncio.to_thread(download_audio, url)
+                queues[cid].append(song)
+                title_lower = (song.get("title") or "unknown").lower()
+                added_titles.append(title_lower)
+                # show last up to 10 added titles
+                last_list = "\n".join(f"{i}. {t}" for i, t in enumerate(added_titles[-10:], start=max(1, len(added_titles)-9)))
+                await progress_msg.edit(f"radio: added {len(added_titles)}/{total}\n\n{last_list}")
+            except Exception as e:
+                logger.warning(f"radio download failed for {vid}: {e}")
+                # still update progress so user sees ongoing activity
+                await progress_msg.edit(f"radio: added {len(added_titles)}/{total} (errors may have occurred)\n\n" + ("\n".join(added_titles[-10:]) or ""))
+
+            # small breathing pause to avoid hammering
+            await asyncio.sleep(1)
+
+        # final message after seeding
+        if cid in radio_mode:
+            if added_titles:
+                await progress_msg.edit(f"radio enabled — added {len(added_titles)} tracks to queue")
+            else:
+                await progress_msg.edit("radio enabled — no tracks were added")
+        else:
+            await progress_msg.edit("radio disabled during seeding")
+
+    except Exception as e:
+        radio_mode.discard(cid)
+        logger.error(f"radio_handler seed failed: {e}")
         try:
-            await ensure_radio_filled(cid)
-        except Exception as e:
-            logger.error(f"radio_handler ensure_radio_filled failed: {e}")
+            await progress_msg.edit("radio failed to fetch tracks")
+        except:
+            pass
 
 @calls.on_stream_end()
 async def on_end(_, u: Update):
@@ -875,9 +953,9 @@ async def speedup_handler(_, m: Message):
         if m.reply_to_message and m.reply_to_message.from_user:
             ru = m.reply_to_message.from_user
             mention = f"[{ru.first_name}](tg://user?id={ru.id})"
-            await m.reply(f"{mention} sped up ✅", parse_mode="markdown")
-        else:
-            await m.reply("speedup applied ✅")
+            await m.reply(f"{mention} sped up", parse_mode="markdown")
+    else:
+        await m.reply("speedup applied")
         logger.info(f"Applied speedup in {cid}: {out} (seek {cur_pos}s)")
     except Exception as e:
         try:
@@ -936,9 +1014,9 @@ async def slowed_handler(_, m: Message):
         if m.reply_to_message and m.reply_to_message.from_user:
             ru = m.reply_to_message.from_user
             mention = f"[{ru.first_name}](tg://user?id={ru.id})"
-            await m.reply(f"{mention} slowed ✅", parse_mode="markdown")
+            await m.reply(f"{mention} slowed", parse_mode="markdown")
         else:
-            await m.reply("slowed applied ✅")
+            await m.reply("slowed applied")
         logger.info(f"Applied slowed in {cid}: {out} (seek {cur_pos}s)")
     except Exception as e:
         try:
@@ -1015,9 +1093,9 @@ async def restore_handler(_, m: Message):
         if m.reply_to_message and m.reply_to_message.from_user:
             ru = m.reply_to_message.from_user
             mention = f"[{ru.first_name}](tg://user?id={ru.id})"
-            await m.reply(f"{mention} restored to normal speed ✅", parse_mode="markdown")
+            await m.reply(f"{mention} restored to normal speed", parse_mode="markdown")
         else:
-            await m.reply("restored to normal speed ✅")
+            await m.reply("restored to normal speed")
         logger.info(f"Restored normal speed in {cid}: {out} (seek {cur_pos}s)")
     except Exception as e:
         try:
@@ -1032,7 +1110,7 @@ async def main():
     await app.start()
     await user.start()
     await calls.start()
-    logger.info("🎵 LIVE!")
+    logger.info("live")
     await idle()
 
 
