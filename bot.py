@@ -3,6 +3,9 @@ import asyncio
 import logging
 import os
 import re
+import uuid
+import shlex
+import time
 
 from dotenv import load_dotenv
 
@@ -26,12 +29,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 API_ID = int(os.getenv("API_ID", "23550251"))
-API_HASH = os.getenv("API_HASH", "202fae900aea35b58c36f0ef2e291d61")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8504147648:AAF48lpywTHMR8T1x3xn13KW2lLubKQ9nus")
-SESSION = os.getenv(
-    "SESSION",
-    "AgFnWSsAGAeBARNzh2MxA10ZupJWM0w2BghrluYpDrdhPfcMjLzZUT-FM7Sr6xxZtB10E8dYrHJY6wwgJMadgGOTJgV8Ta7KSxvkK33L1PAxnSBhJiYx0BF5JBK9ZM50c7exYdEdtsHtKBlLLw3dt_iJpK0s1cVMLWcTI0n9sROVO0_d-tHNVtE_a0kVI2gCnZnopUKq0EPh3E0M8mJBMflpJ8QC1ho3sLgmf44IMGQmJRgFtJbjM6Vp20JbLc5aQXVNq8HkGBCGTDfJtuARBsKWNnih910dzuhaAxfU6DS4OrD-jTXOr58Z0DmwrTDKHX89ZJzGfF5mN8AyusSh3X1CJ2wdSAAAAAHQBWNOAA",
-)
+API_HASH = os.getenv("API_HASH", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+SESSION = os.getenv("SESSION", "")
 LOG_GROUP = int(os.getenv("LOG_GROUP", "-1003387540146"))
 
 app = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -43,8 +43,8 @@ active = {}
 downloads_dir = "/tmp/music_cache"
 os.makedirs(downloads_dir, exist_ok=True)
 
-ban_users = {1938311809}
-admin_id = int(os.getenv("ADMIN_ID", "7314932244"))
+ban_users = set()
+admin_id = int(os.getenv("ADMIN_ID", "0"))
 
 
 def is_banned(uid):
@@ -70,9 +70,7 @@ def clean_artist(title, uploader):
                 r"\s*(official|video|audio).*$", "", match.group(1), flags=re.IGNORECASE
             ).strip()
     if uploader:
-        return re.sub(
-            r"\s*(music|vevo|official).*$", "", uploader, flags=re.IGNORECASE
-        ).strip()
+        return re.sub(r"\s*(music|vevo|official).*$", "", uploader, flags=re.IGNORECASE).strip()
     return "unknown"
 
 
@@ -100,8 +98,7 @@ def download_audio(q):
             "title": i.get("title", "unknown"),
             "artist": clean_artist(i.get("title", ""), i.get("uploader", "")),
             "duration": i.get("duration", 0),
-            "thumb": i.get("thumbnail")
-            or "https://telegra.ph/file/2f7debf856695e0a17296.png",
+            "thumb": i.get("thumbnail") or "https://telegra.ph/file/2f7debf856695e0a17296.png",
             "webpage": i.get("webpage_url", ""),
         }
 
@@ -154,46 +151,144 @@ async def send_now_playing(cid, song, queue_list):
 
     buttons = InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton("pause", callback_data="pause"),
-                InlineKeyboardButton("resume", callback_data="resume"),
-            ],
-            [
-                InlineKeyboardButton("skip", callback_data="skip"),
-                InlineKeyboardButton("stop", callback_data="end"),
-            ],
+            [InlineKeyboardButton("pause", callback_data="pause"), InlineKeyboardButton("resume", callback_data="resume")],
+            [InlineKeyboardButton("skip", callback_data="skip"), InlineKeyboardButton("stop", callback_data="end")],
         ]
     )
 
     try:
         if song.get("thumb"):
-            await app.send_photo(
-                cid, song["thumb"], caption=caption, reply_markup=buttons
-            )
+            await app.send_photo(cid, song["thumb"], caption=caption, reply_markup=buttons)
         else:
-            await app.send_photo(
-                cid,
-                "https://telegra.ph/file/2f7debf856695e0a17296.png",
-                caption=caption,
-                reply_markup=buttons,
-            )
+            await app.send_photo(cid, "https://telegra.ph/file/2f7debf856695e0a17296.png", caption=caption, reply_markup=buttons)
     except Exception as e:
         logger.warning(f"Photo send failed: {e}, using text")
         await app.send_message(cid, caption, reply_markup=buttons)
 
 
+def _make_transformed_filename(src: str, suffix: str):
+    base = os.path.basename(src)
+    name, ext = os.path.splitext(base)
+    uniq = uuid.uuid4().hex[:8]
+    return os.path.join(downloads_dir, f"{name}_{suffix}_{uniq}{ext}")
+
+
+# Core helper: compute current position (seconds) relative to original file
+def get_current_orig_position(state: dict) -> float:
+    """
+    state: active[cid] dict with keys:
+      - base_orig_offset: float seconds into original mapping to start of current file
+      - stream_start_time: epoch when current file started
+      - paused: bool
+      - paused_at: epoch if paused
+      - play_factor: current playback speed factor applied to this stream (1.0 = normal)
+    Returns a float number of seconds (>=0) of how many seconds into the original file we are currently.
+    """
+    base = state.get("base_orig_offset", 0.0)
+    stream_start = state.get("stream_start_time", time.time())
+    play_factor = state.get("play_factor", 1.0)
+    if state.get("paused"):
+        paused_at = state.get("paused_at", stream_start)
+        elapsed = max(0.0, paused_at - stream_start)
+    else:
+        elapsed = max(0.0, time.time() - stream_start)
+    # elapsed is seconds of the current file; to convert to seconds in the original file,
+    # multiply by the play_factor. For example, playing 10s on a 1.2x file maps to 12s in original.
+    return base + (elapsed * float(play_factor))
+
+
+# FFmpeg transform function that seeks in the original file and applies pitch+tempo change.
+async def _run_ffmpeg_transform_seek_orig(orig_path: str, out_path: str, factor: float, seek: float, timeout: int = 120):
+    """
+    Creates out_path by taking orig_path starting at `seek` seconds, applying pitch+tempo shift (factor).
+    factor>1 speeds up/pitches up, factor<1 slows/pitches down.
+    We use: -ss <seek> -i orig_path -af "asetrate=44100*factor,aresample=44100,atempo=atempo" out_path
+    """
+    # clamp atempo to ffmpeg's 0.5-2.0 range; if factor outside that range the atempo will be clamped.
+    atempo = max(0.5, min(2.0, factor))
+    # asetrate will shift pitch (and change sample rate), then we resample back to 44100 and apply atempo to adjust speed.
+    asetrate_expr = f"asetrate=44100*{factor}"
+    af_filter = f"{asetrate_expr},aresample=44100,atempo={atempo}"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        str(float(seek)),
+        "-i",
+        orig_path,
+        "-af",
+        af_filter,
+        "-vn",
+        out_path,
+    ]
+    logger.info(f"Running ffmpeg: {' '.join(shlex.quote(p) for p in cmd)}")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            raise Exception("ffmpeg timed out")
+        if proc.returncode != 0:
+            err = stderr.decode(errors="ignore").strip()
+            raise Exception(f"ffmpeg error: {err}")
+        return out_path
+    except Exception as e:
+        logger.error(f"FFmpeg transform failed: {e}")
+        raise
+
+
+# Ensure active state initialization when we start playing a track
+def _init_active_state_for_song(song: dict):
+    """
+    song is the dict returned by download_audio (with 'file','title', etc.)
+    Returns a new state dict to be stored in active[cid].
+    Fields:
+      - orig_file: path to original full file (do not overwrite)
+      - file: current file path being played (initially same as orig_file)
+      - base_orig_offset: which second in orig_file corresponds to the start of `file` (initially 0)
+      - stream_start_time: epoch when current file started
+      - paused: bool
+      - play_factor: playback speed factor applied to the current file relative to the original
+    """
+    return {
+        "orig_file": song["file"],
+        "file": song["file"],
+        "title": song.get("title", "unknown"),
+        "artist": song.get("artist", "unknown"),
+        "duration": song.get("duration", 0),
+        "thumb": song.get("thumb"),
+        "webpage": song.get("webpage"),
+        "base_orig_offset": 0.0,
+        "stream_start_time": time.time(),
+        "paused": False,
+        "paused_at": None,
+        "play_factor": 1.0,
+    }
+
+
 async def play_next(cid):
     if cid not in queues or not queues[cid]:
         logger.info(f"Queue empty in {cid}")
+        if cid in active:
+            del active[cid]
         return
 
     s = queues[cid].pop(0)
     try:
-        stream = AudioPiped(s["file"], HighQualityAudio())
+        # initialize state
+        state = _init_active_state_for_song(s)
+        stream = AudioPiped(state["file"], HighQualityAudio())
         await calls.change_stream(cid, stream)
-        active[cid] = s
-        await send_now_playing(cid, s, queues.get(cid, []))
-        logger.info(f"Playing: {s['title']}")
+        active[cid] = state
+        await send_now_playing(cid, state, queues.get(cid, []))
+        logger.info(f"Playing: {state['title']}")
     except Exception as e:
         logger.error(f"play next error: {e}")
         await play_next(cid)
@@ -201,10 +296,25 @@ async def play_next(cid):
 
 @app.on_callback_query()
 async def callback_handler(_, query: CallbackQuery):
-    uid = query.from_user.id if query.from_user else None
+    # Determine user id from the callback. Prefer query.from_user, fall back to the original message sender.
+    uid = None
+    if query.from_user:
+        uid = query.from_user.id
+    elif query.message and getattr(query.message, "from_user", None):
+        uid = query.message.from_user.id
+
+    # If the user is banned, return an alert so they know they cannot interact.
     if uid and is_banned(uid):
-        await query.answer()
+        try:
+            await query.answer("You are banned and cannot use this bot.", show_alert=True)
+        except:
+            # If alert fails for any reason, at least acknowledge the callback silently.
+            try:
+                await query.answer()
+            except:
+                pass
         return
+
     data = query.data
     cid = query.message.chat.id
     name = query.from_user.first_name.lower() if query.from_user else "unknown"
@@ -212,6 +322,10 @@ async def callback_handler(_, query: CallbackQuery):
     if data == "pause":
         try:
             await calls.pause_stream(cid)
+            # update internal state
+            if cid in active and not active[cid].get("paused"):
+                active[cid]["paused"] = True
+                active[cid]["paused_at"] = time.time()
             await query.answer("paused", show_alert=False)
             await app.send_message(cid, f"{name} paused")
         except:
@@ -220,6 +334,14 @@ async def callback_handler(_, query: CallbackQuery):
     elif data == "resume":
         try:
             await calls.resume_stream(cid)
+            # update internal state
+            if cid in active and active[cid].get("paused"):
+                paused_at = active[cid].pop("paused_at", None)
+                if paused_at:
+                    elapsed = max(0.0, paused_at - active[cid].get("stream_start_time", paused_at))
+                    # resume so that stream_start_time reflects that elapsed time has already been consumed
+                    active[cid]["stream_start_time"] = time.time() - elapsed
+                active[cid]["paused"] = False
             await query.answer("resumed", show_alert=False)
             await app.send_message(cid, f"{name} resumed")
         except:
@@ -254,48 +376,27 @@ async def start(_, m: Message):
         return
     buttons = InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton(
-                    "add to group", url="https://t.me/MUSlCXBOT?startgroup=true"
-                )
-            ],
-            [
-                InlineKeyboardButton("commands", callback_data="help"),
-                InlineKeyboardButton("owner", url="https://t.me/Vclub_Tech"),
-            ],
+            [InlineKeyboardButton("add to group", url="https://t.me/MUSlCXBOT?startgroup=true")],
+            [InlineKeyboardButton("commands", callback_data="help"), InlineKeyboardButton("owner", url="https://t.me/Vclub_Tech")],
         ]
     )
 
     text = (
-        "**япи door music**\n\n"
-        "пошол нахуй\n\n"
-        "**гавно:**\n"
-        "качество хуйня (320kbps)\n"
-        "ракета илонмаск гавно\n"
-        "пошол ты\n"
-        "твою бабку ебнет молнией\n"
-        "сам сосу\n\n"
-        "**cumанды:**\n"
-        "1 добавить в групу\n"
-        "2 дать админку и акк инвайтнуть\n"
-        "3 start voice chat\n"
-        "4 send /play [song name]\n\n"
-        "**ты даун:**\n"
-        "• /play [song] - сын шлюхи сам узнай\n"
-        "• /skip - скип\n"
-        "• /pause - пауз\n"
-        "• /resume - резюме\n"
-        "• /stop - стоп мне неприятно\n"
-        "• /queue - квеуе\n\n"
-        "сосал да"
+        "**Music Bot**\n\n"
+        "Use /play to start streaming.\n\n"
+        "Commands:\n"
+        "• /play [song]\n"
+        "• /skip\n"
+        "• /pause\n"
+        "• /resume\n"
+        "• /stop\n"
+        "• /queue\n"
+        "• /speedup (admin)\n"
+        "• /slowed (admin)\n"
     )
 
     try:
-        await m.reply_photo(
-            "https://telegra.ph/file/2f7debf856695e0a17296.png",
-            caption=text,
-            reply_markup=buttons,
-        )
+        await m.reply_photo("https://telegra.ph/file/2f7debf856695e0a17296.png", caption=text, reply_markup=buttons)
     except:
         await m.reply(text, reply_markup=buttons)
 
@@ -309,21 +410,14 @@ async def help_cb(_, q: CallbackQuery):
     await q.answer()
     help_text = (
         "help guide\n\n"
-        "**sosi:**\n"
         "`/play [song or link]`\n"
-        "gandon: /play shape of you\n\n"
-        "**controls:**\n"
+        "`/skip` - skip\n"
         "`/pause` - pause\n"
         "`/resume` - resume\n"
-        "`/skip` - skip\n"
-        "`/stop` or `/end` - stop\n\n"
-        "**queue:**\n"
-        "`/queue` - view queue\n\n"
-        "**tips:**\n"
-        "• use youtube links\n"
-        "• use inline buttons\n"
-        "• bot stays in call\n\n"
-        "contact: @jumpfool"
+        "`/stop` - stop\n"
+        "`/queue` - view queue\n"
+        "`/speedup` - pitch up & speed up (admin only)\n"
+        "`/slowed` - pitch down & slow down (admin only)\n"
     )
     await q.message.reply(help_text)
 
@@ -425,12 +519,14 @@ async def play(_, m: Message):
 
         if cid not in active:
             try:
-                stream = AudioPiped(song["file"], HighQualityAudio())
+                # initialize state so we can track seamless offsets
+                state = _init_active_state_for_song(song)
+                stream = AudioPiped(state["file"], HighQualityAudio())
                 await calls.join_group_call(cid, stream)
-                active[cid] = song
+                active[cid] = state
                 await msg.delete()
-                await send_now_playing(cid, song, [])
-                logger.info(f"Started: {song['title']}")
+                await send_now_playing(cid, state, [])
+                logger.info(f"Started: {state['title']}")
             except GroupCallNotFound:
                 await msg.edit("**no active voice chat found**")
             except Exception as e:
@@ -438,9 +534,7 @@ async def play(_, m: Message):
                 await msg.edit(f"error: {str(e).lower()}")
         else:
             queues[cid].append(song)
-            await msg.edit(
-                f"queued: {song['title'][:50].lower()}\nposition: {len(queues[cid])}"
-            )
+            await msg.edit(f"queued: {song['title'][:50].lower()}\nposition: {len(queues[cid])}")
     except Exception as e:
         logger.error(f"Command error: {e}")
         await msg.edit(f"❌ {str(e)[:100]}")
@@ -479,6 +573,10 @@ async def pause(_, m: Message):
             pass
     try:
         await calls.pause_stream(cid)
+        # update internal state
+        if cid in active and not active[cid].get("paused"):
+            active[cid]["paused"] = True
+            active[cid]["paused_at"] = time.time()
         await m.reply("**paused**")
     except:
         await m.reply("not playing")
@@ -498,6 +596,14 @@ async def resume(_, m: Message):
             pass
     try:
         await calls.resume_stream(cid)
+        # update internal state
+        if cid in active and active[cid].get("paused"):
+            paused_at = active[cid].pop("paused_at", None)
+            if paused_at is not None:
+                elapsed = max(0.0, paused_at - active[cid].get("stream_start_time", paused_at))
+                # set stream_start_time such that elapsed is preserved
+                active[cid]["stream_start_time"] = time.time() - elapsed
+            active[cid]["paused"] = False
         await m.reply("**resumed**")
     except:
         await m.reply("not paused")
@@ -553,6 +659,221 @@ async def queue(_, m: Message):
 async def on_end(_, u: Update):
     logger.info(f"Stream ended in {u.chat_id}")
     await play_next(u.chat_id)
+
+
+# -- speedup & slowed (seamless transforms) ---------------------------------
+# Both commands are admin-only and will transform from the current playback position
+# (calculated relative to the original downloaded file). The transformed file is
+# produced by seeking into the original full file and outputting the remainder with
+# applied pitch/tempo filters, then switching the stream. This makes the switch
+# continue from the same logical time in the track (i.e. seamless).
+
+
+@app.on_message(filters.command("speedup") & filters.user(admin_id))
+async def speedup_handler(_, m: Message):
+    uid = m.from_user.id if m.from_user else None
+    if uid and is_banned(uid):
+        return
+
+    parts = m.text.split(None, 2)
+    cid = m.chat.id
+    # allow admin to target a group as first arg (username or -100... id)
+    if len(parts) > 1:
+        maybe = parts[1]
+        if maybe.startswith(("-", "@")) or maybe.lstrip("-").isdigit():
+            try:
+                target = await app.get_chat(maybe)
+                cid = target.id
+            except:
+                # treat it as non-chat arg
+                pass
+
+    if cid not in active:
+        return await m.reply("nothing is playing in the target chat")
+
+    notice = await m.reply("processing speedup... please wait (this may take a few seconds)")
+
+    try:
+        state = active[cid]
+        # compute position in original file
+        cur_pos = get_current_orig_position(state)
+        orig = state.get("orig_file")
+        if not orig or not os.path.exists(orig):
+            await notice.delete()
+            return await m.reply("original file not available for seamless transform")
+
+        out = _make_transformed_filename(orig, "speedup")
+        factor = 1.2  # 20% faster & pitched up
+        await _run_ffmpeg_transform_seek_orig(orig, out, factor, seek=cur_pos, timeout=180)
+
+        # switch stream to transformed file (which begins at original cur_pos)
+        stream = AudioPiped(out, HighQualityAudio())
+        await calls.change_stream(cid, stream)
+
+        # update state: new file maps to the same orig offset (base_orig_offset = cur_pos)
+        state["file"] = out
+        state["base_orig_offset"] = float(cur_pos)
+        state["stream_start_time"] = time.time()
+        state["paused"] = False
+        state["play_factor"] = float(factor)
+        state["title"] = f"{state.get('title','unknown')} (speedup)"
+        await notice.delete()
+
+        # mention if replied to
+        if m.reply_to_message and m.reply_to_message.from_user:
+            ru = m.reply_to_message.from_user
+            mention = f"[{ru.first_name}](tg://user?id={ru.id})"
+            await m.reply(f"{mention} sped up ✅", parse_mode="markdown")
+        else:
+            await m.reply("speedup applied ✅")
+        logger.info(f"Applied speedup in {cid}: {out} (seek {cur_pos}s)")
+    except Exception as e:
+        try:
+            await notice.delete()
+        except:
+            pass
+        logger.error(f"speedup failed: {e}")
+        await m.reply(f"error applying speedup: {e}")
+
+
+@app.on_message(filters.command("slowed") & filters.user(admin_id))
+async def slowed_handler(_, m: Message):
+    uid = m.from_user.id if m.from_user else None
+    if uid and is_banned(uid):
+        return
+
+    parts = m.text.split(None, 2)
+    cid = m.chat.id
+    if len(parts) > 1:
+        maybe = parts[1]
+        if maybe.startswith(("-", "@")) or maybe.lstrip("-").isdigit():
+            try:
+                target = await app.get_chat(maybe)
+                cid = target.id
+            except:
+                pass
+
+    if cid not in active:
+        return await m.reply("nothing is playing in the target chat")
+
+    notice = await m.reply("processing slowed... please wait (this may take a few seconds)")
+
+    try:
+        state = active[cid]
+        cur_pos = get_current_orig_position(state)
+        orig = state.get("orig_file")
+        if not orig or not os.path.exists(orig):
+            await notice.delete()
+            return await m.reply("original file not available for seamless transform")
+
+        out = _make_transformed_filename(orig, "slowed")
+        factor = 0.85  # 15% slower & pitched down
+        await _run_ffmpeg_transform_seek_orig(orig, out, factor, seek=cur_pos, timeout=180)
+
+        stream = AudioPiped(out, HighQualityAudio())
+        await calls.change_stream(cid, stream)
+
+        state["file"] = out
+        state["base_orig_offset"] = float(cur_pos)
+        state["stream_start_time"] = time.time()
+        state["paused"] = False
+        state["play_factor"] = float(factor)
+        state["title"] = f"{state.get('title','unknown')} (slowed)"
+        await notice.delete()
+
+        if m.reply_to_message and m.reply_to_message.from_user:
+            ru = m.reply_to_message.from_user
+            mention = f"[{ru.first_name}](tg://user?id={ru.id})"
+            await m.reply(f"{mention} slowed ✅", parse_mode="markdown")
+        else:
+            await m.reply("slowed applied ✅")
+        logger.info(f"Applied slowed in {cid}: {out} (seek {cur_pos}s)")
+    except Exception as e:
+        try:
+            await notice.delete()
+        except:
+            pass
+        logger.error(f"slowed failed: {e}")
+        await m.reply(f"error applying slowed: {e}")
+
+
+# -- restore command (admin only) -------------------------------------------
+# Produces a normal-speed stream starting at the current logical position
+# by seeking into the original file and producing a normal-speed remainder,
+# then switching the stream seamlessly.
+@app.on_message(filters.command("restore") & filters.user(admin_id))
+async def restore_handler(_, m: Message):
+    uid = m.from_user.id if m.from_user else None
+    if uid and is_banned(uid):
+        return
+
+    parts = m.text.split(None, 2)
+    cid = m.chat.id
+    # allow admin to target a group as first arg (username or -100... id)
+    if len(parts) > 1:
+        maybe = parts[1]
+        if maybe.startswith(("-", "@")) or maybe.lstrip("-").isdigit():
+            try:
+                target = await app.get_chat(maybe)
+                cid = target.id
+            except:
+                pass
+
+    if cid not in active:
+        return await m.reply("nothing is playing in the target chat")
+
+    notice = await m.reply("restoring normal speed... please wait (this may take a few seconds)")
+
+    try:
+        state = active[cid]
+        # compute position in original file
+        cur_pos = get_current_orig_position(state)
+        orig = state.get("orig_file")
+        if not orig or not os.path.exists(orig):
+            try:
+                await notice.delete()
+            except:
+                pass
+            return await m.reply("original file not available for restore")
+
+        out = _make_transformed_filename(orig, "restored")
+        factor = 1.0  # normal speed / pitch
+        # use the seek-transform helper to create a normal-speed remainder starting at cur_pos
+        await _run_ffmpeg_transform_seek_orig(orig, out, factor, seek=cur_pos, timeout=180)
+
+        # switch stream to transformed file which begins at the logical current position
+        stream = AudioPiped(out, HighQualityAudio())
+        await calls.change_stream(cid, stream)
+
+        # update state: new file maps to the same orig offset (base_orig_offset = cur_pos)
+        state["file"] = out
+        state["base_orig_offset"] = float(cur_pos)
+        state["stream_start_time"] = time.time()
+        state["paused"] = False
+        state["play_factor"] = float(factor)
+        # reset title to base title (strip known suffixes) and mark restored
+        base_title = state.get("title", "unknown").split(" (")[0]
+        state["title"] = f"{base_title} (restored)"
+        try:
+            await notice.delete()
+        except:
+            pass
+
+        # mention if replied to
+        if m.reply_to_message and m.reply_to_message.from_user:
+            ru = m.reply_to_message.from_user
+            mention = f"[{ru.first_name}](tg://user?id={ru.id})"
+            await m.reply(f"{mention} restored to normal speed ✅", parse_mode="markdown")
+        else:
+            await m.reply("restored to normal speed ✅")
+        logger.info(f"Restored normal speed in {cid}: {out} (seek {cur_pos}s)")
+    except Exception as e:
+        try:
+            await notice.delete()
+        except:
+            pass
+        logger.error(f"restore failed: {e}")
+        await m.reply(f"error restoring: {e}")
 
 
 async def main():
