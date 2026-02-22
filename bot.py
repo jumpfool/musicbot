@@ -43,8 +43,108 @@ active = {}
 downloads_dir = "/tmp/music_cache"
 os.makedirs(downloads_dir, exist_ok=True)
 
+# Radio mode: set of chat ids where radio mode is enabled.
+# When enabled, the bot will fetch YouTube "Radio/Mix" playlists
+# based on the currently playing video and enqueue similar tracks.
+radio_mode = set()
+# How many video ids to fetch per radio batch (can be tuned via env)
+RADIO_BATCH = int(os.getenv("RADIO_BATCH", "25"))
+
 ban_users = set()
 admin_id = int(os.getenv("ADMIN_ID", "0"))
+
+
+def video_id_from_url(url: str):
+    """
+    Extract a 11-char YouTube video id from common URL forms.
+    Returns None if not found.
+    """
+    if not url:
+        return None
+    # common patterns: v=VIDEO_ID, youtu.be/VIDEO_ID, /watch?v=VIDEO_ID
+    m = re.search(r"(?:v=|youtu\\.be/|/watch\\?v=)([0-9A-Za-z_-]{11})", url)
+    if m:
+        return m.group(1)
+    # fallback: try to find any 11-char candidate
+    m2 = re.search(r"([0-9A-Za-z_-]{11})", url)
+    return m2.group(1) if m2 else None
+
+
+def fetch_radio_ids(video_id: str, max_items: int = RADIO_BATCH):
+    """
+    Given a seed YouTube video_id, construct the YouTube 'Radio/Mix' URL:
+    https://www.youtube.com/watch?v=VIDEO_ID&list=RDVIDEO_ID
+    Use yt-dlp in 'flat' mode to retrieve up to `max_items` video ids.
+    Returns a list of video ids (strings).
+    """
+    if not video_id:
+        return []
+    radio_url = f"https://www.youtube.com/watch?v={video_id}&list=RD{video_id}"
+    opts = {"quiet": True, "extract_flat": True, "skip_download": True}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(radio_url, download=False)
+            ids = []
+            for e in info.get("entries", [])[:max_items]:
+                # entry could have 'id' or 'url'
+                vid = e.get("id") or e.get("url")
+                if not vid:
+                    continue
+                # normalize to 11-char id if possible
+                if len(vid) == 11:
+                    ids.append(vid)
+                else:
+                    maybe = video_id_from_url(vid)
+                    if maybe:
+                        ids.append(maybe)
+            return ids
+    except Exception as exc:
+        logger.error(f"fetch_radio_ids failed for seed {video_id}: {exc}")
+        return []
+
+
+async def ensure_radio_filled(cid):
+    """
+    Ensure that if radio_mode is enabled for `cid`, its queue has some upcoming tracks.
+    This will fetch a batch of similar video ids based on the current playing item's webpage
+    and download them (using existing download_audio) and append to queues[cid].
+    """
+    if cid not in radio_mode:
+        return
+    # ensure queue exists
+    if cid not in queues:
+        queues[cid] = []
+
+    # if there are already enough queued items, do nothing
+    if len(queues[cid]) >= 5:
+        return
+
+    # decide seed video id: prefer the currently active song's webpage url
+    seed_vid = None
+    if cid in active:
+        seed_vid = video_id_from_url(active[cid].get("webpage"))
+    # otherwise, if there's a queued item, use its webpage
+    if not seed_vid and queues[cid]:
+        seed_vid = video_id_from_url(queues[cid][0].get("webpage"))
+
+    if not seed_vid:
+        return
+
+    try:
+        ids = await asyncio.to_thread(fetch_radio_ids, seed_vid, RADIO_BATCH)
+        # download sequentially (could be optimized to parallel later)
+        for vid in ids:
+            # small safety cap to avoid infinite growth
+            if len(queues[cid]) >= 200:
+                break
+            try:
+                url = f"https://www.youtube.com/watch?v={vid}"
+                song = await asyncio.to_thread(download_audio, url)
+                queues[cid].append(song)
+            except Exception as e:
+                logger.warning(f"radio download failed for {vid}: {e}")
+    except Exception as e:
+        logger.error(f"ensure_radio_filled error for {cid}: {e}")
 
 
 def is_banned(uid):
@@ -289,6 +389,12 @@ async def play_next(cid):
         active[cid] = state
         await send_now_playing(cid, state, queues.get(cid, []))
         logger.info(f"Playing: {state['title']}")
+        # If radio mode is enabled for this chat, asynchronously ensure the queue is topped up.
+        # We await here to keep behavior deterministic; it downloads a batch if needed.
+        try:
+            await ensure_radio_filled(cid)
+        except Exception as e:
+            logger.warning(f"ensure_radio_filled failed in play_next for {cid}: {e}")
     except Exception as e:
         logger.error(f"play next error: {e}")
         await play_next(cid)
@@ -522,7 +628,18 @@ async def play(_, m: Message):
                 # initialize state so we can track seamless offsets
                 state = _init_active_state_for_song(song)
                 stream = AudioPiped(state["file"], HighQualityAudio())
-                await calls.join_group_call(cid, stream)
+                try:
+                    # try joining; some backends may raise if the assistant is already in the call.
+                    await calls.join_group_call(cid, stream)
+                except Exception as e:
+                    # If the join failed because we're already in the call, switch the stream instead.
+                    # Check the exception message for common phrases; if it's a different error, re-raise.
+                    msg_err = str(e).lower()
+                    if "already joined" in msg_err or "already in group call" in msg_err or "already joined into group call" in msg_err:
+                        logger.info(f"Assistant already in call for {cid}, using change_stream to start playback")
+                        await calls.change_stream(cid, stream)
+                    else:
+                        raise
                 active[cid] = state
                 await msg.delete()
                 await send_now_playing(cid, state, [])
@@ -654,6 +771,41 @@ async def queue(_, m: Message):
         text += "empty"
     await m.reply(text)
 
+
+@app.on_message(filters.command("radio"))
+async def radio_handler(_, m: Message):
+    """
+    Toggle radio mode for the chat. When enabled, similar tracks will be fetched
+    and appended to the queue automatically.
+    Usage: /radio
+    Admins can target a specific group by providing its username/id as the first argument.
+    """
+    uid = m.from_user.id if m.from_user else None
+    if uid and is_banned(uid):
+        return
+
+    parts = m.text.split(None, 1)
+    cid = m.chat.id
+    # allow admin to toggle radio for a specified target chat (first arg)
+    if len(parts) > 1 and uid == admin_id:
+        try:
+            target = await app.get_chat(parts[1])
+            cid = target.id
+        except Exception:
+            # if parsing target fails, keep using current chat
+            pass
+
+    if cid in radio_mode:
+        radio_mode.remove(cid)
+        await m.reply("Radio mode disabled for this chat.")
+    else:
+        radio_mode.add(cid)
+        await m.reply("Radio mode enabled — fetching similar tracks into the queue.")
+        # attempt to seed the queue immediately
+        try:
+            await ensure_radio_filled(cid)
+        except Exception as e:
+            logger.error(f"radio_handler ensure_radio_filled failed: {e}")
 
 @calls.on_stream_end()
 async def on_end(_, u: Update):
