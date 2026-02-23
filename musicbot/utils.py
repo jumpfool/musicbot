@@ -204,7 +204,7 @@ def get_current_orig_position(state: dict) -> float:
         elapsed = max(0.0, time.time() - stream_start)
     return base + (elapsed * float(play_factor))
 
-async def _run_ffmpeg_transform_seek_orig(orig_path: str, out_path: str, factor: float, seek: float, timeout: int = 120):
+async async def _run_ffmpeg_transform_seek_orig(orig_path: str, out_path: str, factor: float, seek: float, timeout: int = 120):
     atempo = max(0.5, min(2.0, factor))
     asetrate_expr = f"asetrate=44100*{factor}"
     af_filter = f"{asetrate_expr},aresample=44100,atempo={atempo}"
@@ -238,6 +238,31 @@ async def _run_ffmpeg_transform_seek_orig(orig_path: str, out_path: str, factor:
             err = stderr.decode(errors="ignore").strip()
             raise Exception(f"ffmpeg error: {err}")
         return out_path
+
+
+async def process_radio_batch(pending_items, concurrency: int = 3):
+    """process a list of pending items created by radio_handler
+    each item is a dict with keys: url, is_pending, title, file
+    this function downloads items (using download_audio) in background and
+    replaces the pending placeholders with real metadata
+    """
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _download_item(item):
+        async with sem:
+            try:
+                url = item.get("url")
+                if not url:
+                    return
+                song = await asyncio.to_thread(download_audio, url)
+                # update in place
+                item.update(song)
+                item["is_pending"] = False
+            except Exception as e:
+                logger.warning(f"process_radio_batch download failed for {item.get('url')}: {e}")
+
+    await asyncio.gather(*[_download_item(it) for it in pending_items])
+
     except Exception as e:
         logger.error(f"FFmpeg transform failed: {e}")
         raise
