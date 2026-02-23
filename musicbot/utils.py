@@ -13,9 +13,15 @@ from pytgcalls.exceptions import GroupCallNotFound
 from pytgcalls.types import AudioPiped
 from pytgcalls.types.input_stream.quality import HighQualityAudio
 
-from musicbot.config import DOWNLOADS_DIR, RADIO_BATCH
+from musicbot.config import DOWNLOADS_DIR, RADIO_BATCH, COOKIES_FILE
 from musicbot.state import queues, active, radio_mode, ban_users
 from musicbot.core import app, user, calls, logger
+
+def _get_yt_opts(base_opts):
+    opts = base_opts.copy()
+    if COOKIES_FILE:
+        opts["cookies"] = COOKIES_FILE
+    return opts
 
 def video_id_from_url(url: str):
     if not url:
@@ -31,6 +37,7 @@ def fetch_radio_ids(video_id: str, max_items: int = RADIO_BATCH):
         return []
     radio_url = f"https://www.youtube.com/watch?v={video_id}&list=RD{video_id}"
     opts = {"quiet": True, "extract_flat": True, "skip_download": True}
+    opts = _get_yt_opts(opts)
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(radio_url, download=False)
@@ -76,6 +83,7 @@ def download_audio(q):
         ],
     }
     search = f"ytsearch:{q}" if not q.startswith("http") else q
+    opts = _get_yt_opts(opts)
     with yt_dlp.YoutubeDL(opts) as ydl:
         i = ydl.extract_info(search, download=True)
         if "entries" in i:
@@ -132,6 +140,7 @@ def format_duration(sec):
 
 def search_youtube(q):
     opts = {"format": "bestaudio", "quiet": True, "no_warnings": True}
+    opts = _get_yt_opts(opts)
     with yt_dlp.YoutubeDL(opts) as ydl:
         i = ydl.extract_info(f"ytsearch5:{q}", download=False)
         results = []

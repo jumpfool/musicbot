@@ -10,6 +10,12 @@ SESSION = os.getenv("SESSION", "")
 LOG_GROUP = int(os.getenv("LOG_GROUP", "-1003387540146"))
 RADIO_BATCH = int(os.getenv("RADIO_BATCH", "25"))
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+YOUTUBE_COOKIES = os.getenv("YOUTUBE_COOKIES", "")
 
 DOWNLOADS_DIR = "/tmp/music_cache"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+COOKIES_FILE = os.path.join(DOWNLOADS_DIR, "cookies.txt")
+if YOUTUBE_COOKIES:
+    with open(COOKIES_FILE, "w") as f:
+        f.write(YOUTUBE_COOKIES)
