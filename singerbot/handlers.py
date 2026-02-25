@@ -6,10 +6,10 @@ from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMa
 from pytgcalls.types import AudioPiped, Update, HighQualityAudio
 from pytgcalls.exceptions import GroupCallNotFound
 
-from musicbot.config import ADMIN_ID, RADIO_BATCH
-from musicbot.core import app, calls, logger
-from musicbot.state import active, queues, ban_users, radio_mode
-from musicbot.utils import (
+from singerbot.config import ADMIN_ID, RADIO_BATCH
+from singerbot.core import app, calls, logger
+from singerbot.state import active, queues, ban_users, radio_mode
+from singerbot.utils import (
     is_banned, play_next, download_audio, ensure_assistant_joined,
     send_now_playing, _init_active_state_for_song, video_id_from_url,
     fetch_radio_ids, get_current_orig_position, _make_transformed_filename,
@@ -85,7 +85,7 @@ async def start(_, m: Message):
         return
     buttons = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("add to group", url="https://t.me/MUSlCXBOT?startgroup=true")],
+            [InlineKeyboardButton("add to group", url="https://t.me/SINGERBOT?startgroup=true")],
             [InlineKeyboardButton("commands", callback_data="help"), InlineKeyboardButton("owner", url="https://t.me/Vclub_Tech")],
         ]
     )
@@ -93,15 +93,15 @@ async def start(_, m: Message):
         "**music bot**\n\n"
         "use /play to start streaming.\n\n"
         "commands:\n"
-        "• /play [song]\n"
-        "• /skip\n"
-        "• /pause\n"
-        "• /resume\n"
-        "• /stop\n"
-        "• /queue\n"
-        "• /speedup (admin)\n"
-        "• /slowed (admin)\n"
-        "• /radio - toggle radio mode (auto-queue similar tracks)\n"
+        "- /play [song]\n"
+        "- /skip\n"
+        "- /pause\n"
+        "- /resume\n"
+        "- /stop\n"
+        "- /queue\n"
+        "- /speedup (admin)\n"
+        "- /slowed (admin)\n"
+        "- /radio - toggle radio mode (auto-queue similar tracks)\n"
     )
     try:
         await m.reply_photo("https://telegra.ph/file/2f7debf856695e0a17296.png", caption=text, reply_markup=buttons)
@@ -238,7 +238,7 @@ async def play(_, m: Message):
             await msg.edit(f"queued: {song['title'][:50].lower()}\nposition: {len(queues[cid])}")
     except Exception as e:
         logger.error(f"Command error: {e}")
-        await msg.edit(f"❌ {str(e)[:100]}")
+        await msg.edit(f"error: {str(e)[:100]}")
 
 @app.on_message(filters.command("skip"))
 async def skip(_, m: Message):
@@ -410,9 +410,9 @@ async def radio_handler(_, m: Message):
             await asyncio.sleep(1)
         if cid in radio_mode:
             if added_titles:
-                await progress_msg.edit(f"radio enabled — added {len(added_titles)} tracks to queue")
+                await progress_msg.edit(f"radio enabled - added {len(added_titles)} tracks to queue")
             else:
-                await progress_msg.edit("radio enabled — no tracks were added")
+                await progress_msg.edit("radio enabled - no tracks were added")
         else:
             await progress_msg.edit("radio disabled during seeding")
     except Exception as e:

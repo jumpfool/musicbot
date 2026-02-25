@@ -1,14 +1,14 @@
 [Unit]
-Description=Simple Music Bot
+Description=SingerBot - Telegram Voice Chat Music Bot
 After=network.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/path/to/SimpleMusicBot
-EnvironmentFile=/path/to/SimpleMusicBot/.env
+WorkingDirectory=/path/to/SingerBot
+EnvironmentFile=/path/to/SingerBot/.env
 Environment="PATH=/root/.deno/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/usr/bin/python3 /path/to/SimpleMusicBot/bot.py
+ExecStart=/usr/bin/python3 /path/to/SingerBot/bot.py
 Restart=always
 RestartSec=10
 
