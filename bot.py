@@ -1,6 +1,6 @@
-from musicbot.core import app, user, calls, logger
+from singerbot.core import app, user, calls, logger
 from pyrogram import idle
-import musicbot.handlers
+import singerbot.handlers
 
 async def main():
     await app.start()

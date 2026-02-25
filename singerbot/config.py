@@ -12,7 +12,7 @@ RADIO_BATCH = int(os.getenv("RADIO_BATCH", "25"))
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 YOUTUBE_COOKIES = os.getenv("YOUTUBE_COOKIES", "")
 
-DOWNLOADS_DIR = "/tmp/music_cache"
+DOWNLOADS_DIR = "/tmp/singerbot_cache"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 COOKIES_FILE = os.path.join(DOWNLOADS_DIR, "cookies.txt")

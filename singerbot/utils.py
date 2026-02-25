@@ -13,9 +13,9 @@ from pytgcalls.exceptions import GroupCallNotFound
 from pytgcalls.types import AudioPiped
 from pytgcalls.types.input_stream.quality import HighQualityAudio
 
-from musicbot.config import DOWNLOADS_DIR, RADIO_BATCH, COOKIES_FILE
-from musicbot.state import queues, active, radio_mode, ban_users
-from musicbot.core import app, user, calls, logger
+from singerbot.config import DOWNLOADS_DIR, RADIO_BATCH, COOKIES_FILE
+from singerbot.state import queues, active, radio_mode, ban_users
+from singerbot.core import app, user, calls, logger
 
 def _get_yt_opts(base_opts):
     opts = base_opts.copy()
