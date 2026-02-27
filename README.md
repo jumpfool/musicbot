@@ -36,8 +36,11 @@ SingerBot is a Telegram bot that streams audio from YouTube into Telegram voice 
    docker run -d --name singerbot \
      --env-file .env \
      -v /path/to/cache:/tmp/singerbot_cache \
+     -v $(pwd)/cookies.txt:/app/cookies.txt \
      singerbot
    ```
+
+   Note: The cookies.txt volume mount is optional and only needed for YouTube access in rate-limited environments.
 
 ### Manual Installation
 
@@ -61,7 +64,9 @@ SingerBot is a Telegram bot that streams audio from YouTube into Telegram voice 
    ADMIN_ID=your_user_id
    ```
 
-4. Run the bot:
+4. (Optional) For YouTube access in rate-limited environments, place a `cookies.txt` file in the project root directory
+
+5. Run the bot:
    ```bash   python bot.py
    ```
 
@@ -102,7 +107,8 @@ The following environment variables can be configured:
 | `ADMIN_ID` | Admin user ID | - |
 | `LOG_GROUP` | Log group chat ID | - |
 | `RADIO_BATCH` | Number of tracks to fetch in radio mode | 25 |
-| `YOUTUBE_COOKIES` | YouTube cookies (optional) | - |
+
+**Cookies File**: For YouTube access in rate-limited environments, place a `cookies.txt` file in the project root directory (optional)
 
 ## Architecture
 
