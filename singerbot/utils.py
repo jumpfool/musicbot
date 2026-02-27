@@ -19,7 +19,7 @@ from singerbot.core import app, user, calls, logger
 
 def _get_yt_opts(base_opts):
     opts = base_opts.copy()
-    if COOKIES_FILE:
+    if COOKIES_FILE and os.path.exists(COOKIES_FILE):
         opts["cookies"] = COOKIES_FILE
     return opts
 

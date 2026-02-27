@@ -1,0 +1,15 @@
+# Netscape HTTP Cookie File
+# This file is used by yt-dlp to access YouTube
+# Export your cookies from your browser using a browser extension like "Get cookies.txt"
+#
+# Format example:
+# .youtube.com	TRUE	/	FALSE	1234567890	VISITOR_INFO1_LIVE	XXXXXX
+# .youtube.com	TRUE	/	FALSE	1234567890	PREF	XXXXXX
+# .youtube.com	TRUE	/	TRUE	1234567890	SID	XXXXXX
+#
+# To get your cookies:
+# 1. Install the "Get cookies.txt" browser extension
+# 2. Go to YouTube and log in
+# 3. Click the extension and export your cookies
+# 4. Save the exported content as cookies.txt in the project root
+# 5. Rename this file to cookies.txt (or just use your exported file)
