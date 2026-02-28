@@ -1,35 +1,23 @@
+import os
 from singerbot.core import app, user, calls, logger
 from pyrogram import idle
 import singerbot.handlers
-from singerbot.config import COOKIES_FILE, YOUTUBE_CLIENT, YOUTUBE_JS_RUNTIME, YOUTUBE_PO_TOKEN
-import os
+
 
 async def main():
-    if COOKIES_FILE:
-        logger.info(f"Checking for cookies file at: {COOKIES_FILE}")
-        if os.path.exists(COOKIES_FILE):
-            if os.access(COOKIES_FILE, os.R_OK):
-                file_size = os.path.getsize(COOKIES_FILE)
-                logger.info(f"✓ Cookies file found and accessible (size: {file_size} bytes)")
-                logger.info(f"  Path: {os.path.abspath(COOKIES_FILE)}")
-            else:
-                logger.warning(f"✗ Cookies file exists but is not readable: {COOKIES_FILE}")
-        else:
-            logger.warning(f"✗ Cookies file not found: {COOKIES_FILE}")
-            logger.warning(f"  YouTube may block requests without cookies. See cookies.txt.example for setup instructions.")
+    sc_ids = os.getenv("SOUNDCLOUD_CLIENT_IDS", "")
+    if sc_ids:
+        count = len([c for c in sc_ids.split(",") if c.strip()])
+        logger.info(f"SoundCloud client IDs configured: {count}")
     else:
-        logger.warning("COOKIES_FILE path is not configured")
-
-    logger.info(f"YouTube player client: {YOUTUBE_CLIENT or 'default (yt-dlp auto)'}")
-    logger.info(f"YouTube JS runtime: {YOUTUBE_JS_RUNTIME or 'disabled'}")
-    if YOUTUBE_PO_TOKEN:
-        logger.info("YouTube PO Token: configured")
+        logger.warning("SOUNDCLOUD_CLIENT_IDS is not set — SoundCloud features will not work")
 
     await app.start()
     await user.start()
     await calls.start()
     logger.info("live")
     await idle()
+
 
 if __name__ == "__main__":
     app.run(main())

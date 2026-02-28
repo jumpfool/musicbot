@@ -13,9 +13,6 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
        ca-certificates \
        curl \
-       gnupg \
-       dirmngr \
-       apt-transport-https \
        ffmpeg \
        libopus0 \
        libopus-dev \
@@ -24,8 +21,6 @@ RUN apt-get update \
        python3-dev \
        git \
        procps \
-  && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-  && apt-get install -y --no-install-recommends nodejs \
   && rm -rf /var/lib/apt/lists/* \
   \
   && useradd --create-home --shell /bin/bash botuser \

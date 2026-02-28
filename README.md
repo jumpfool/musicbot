@@ -1,18 +1,18 @@
 # SingerBot
 
-SingerBot is a Telegram bot that streams audio from YouTube into Telegram voice chats. It provides a complete music streaming solution for group voice calls with queue management, playback controls, and audio effects.
+SingerBot is a Telegram bot that streams audio from SoundCloud into Telegram voice chats. It provides a complete music streaming solution for group voice calls with queue management, playback controls, and audio effects.
 
 ## Features
 
-- Stream music from YouTube URLs or search queries
+- Stream music from SoundCloud URLs or search queries
 - Queue management with support for multiple chats
 - Playback controls: play, pause, resume, skip, stop
-- Radio mode - automatically queues similar tracks based on the current song
+- Radio mode - automatically queues similar tracks based on the current song using SoundCloud's related tracks API
 - Audio effects: speedup (1.2x), slowed (0.85x), and restore to normal speed
 - User banning system for access control
 - Cross-chat administration - control playback in other groups
 - Inline keyboard controls for easy interaction
-- Search functionality for finding YouTube videos
+- Search functionality for finding SoundCloud tracks
 
 ## Requirements
 
@@ -20,7 +20,7 @@ SingerBot is a Telegram bot that streams audio from YouTube into Telegram voice 
 - Telegram API credentials (API_ID, API_HASH)
 - Bot token from @BotFather
 - FFmpeg
-- YouTube cookies (optional, for rate-limited environments)
+- SoundCloud API client ID(s)
 
 ## Installation
 
@@ -36,11 +36,8 @@ SingerBot is a Telegram bot that streams audio from YouTube into Telegram voice 
    docker run -d --name singerbot \
      --env-file .env \
      -v /path/to/cache:/tmp/singerbot_cache \
-     -v $(pwd)/cookies.txt:/app/cookies.txt \
      singerbot
    ```
-
-   Note: The cookies.txt volume mount is optional and only needed for YouTube access in rate-limited environments.
 
 ### Manual Installation
 
@@ -62,18 +59,13 @@ SingerBot is a Telegram bot that streams audio from YouTube into Telegram voice 
    BOT_TOKEN=your_bot_token
    SESSION=your_session_string
    ADMIN_ID=your_user_id
+   SOUNDCLOUD_CLIENT_IDS=your_client_id
    ```
 
-4. (Optional but recommended) Configure YouTube cookies:
-   - Place a `cookies.txt` file in the project root, or
-   - Set `COOKIES_FILE=/path/to/cookies.txt` in `.env`
-
-5. Run the bot:
+4. Run the bot:
    ```bash
    python bot.py
    ```
-
-   The bot will log the cookies file status on startup. If you see "✗ Cookies file not found", YouTube may block your requests.
 
 ## Getting Telegram Credentials
 
@@ -81,17 +73,26 @@ SingerBot is a Telegram bot that streams audio from YouTube into Telegram voice 
 2. **Bot Token**: Create via [@BotFather](https://t.me/BotFather)
 3. **Session String**: Run `python generate_session.py` and follow the prompts
 
+## Getting a SoundCloud Client ID
+
+1. Open [soundcloud.com](https://soundcloud.com) in your browser
+2. Open DevTools (F12) and go to the **Network** tab
+3. Play any track and look for requests to `api-v2.soundcloud.com`
+4. The `client_id` query parameter in those requests is your client ID
+
+You can provide multiple client IDs (comma-separated) for rotation fallback in case one is rate-limited or expired.
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/play [song]` | Play a song by name or URL |
+| `/play [song]` | Play a song by name or SoundCloud URL |
 | `/skip` | Skip the current track |
 | `/pause` | Pause playback |
 | `/resume` | Resume playback |
 | `/stop` | Stop playback and clear queue |
 | `/queue` | View the current queue |
-| `/search [query]` | Search for songs on YouTube |
+| `/search [query]` | Search for songs on SoundCloud |
 | `/radio` | Toggle radio mode (auto-queue similar tracks) |
 | `/speedup` | Speed up playback (admin only) |
 | `/slowed` | Slow down playback (admin only) |
@@ -101,8 +102,6 @@ SingerBot is a Telegram bot that streams audio from YouTube into Telegram voice 
 
 ## Configuration
 
-The following environment variables can be configured:
-
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `API_ID` | Telegram API ID | - |
@@ -111,60 +110,8 @@ The following environment variables can be configured:
 | `SESSION` | User session string | - |
 | `ADMIN_ID` | Admin user ID | - |
 | `LOG_GROUP` | Log group chat ID | - |
+| `SOUNDCLOUD_CLIENT_IDS` | Comma-separated SoundCloud client IDs | - |
 | `RADIO_BATCH` | Number of tracks to fetch in radio mode | 25 |
-| `COOKIES_FILE` | Path to YouTube cookies.txt file | `./cookies.txt` |
-| `YOUTUBE_COOKIES` | Alternative name for cookies file path | `./cookies.txt` |
-| `YOUTUBE_CLIENT` | yt-dlp player client (`tv_simply`, `tv`, `web`, `android`, `default`, …) | `tv_simply` |
-| `YOUTUBE_PO_TOKEN` | PO Token for YouTube requests (advanced, format: `CLIENT.TYPE+TOKEN`) | - |
-| `YOUTUBE_JS_RUNTIME` | JS runtime for yt-dlp signature solving (`node`, `deno`, `node:/path`, or JSON dict) | `node` |
-
-### YouTube Authentication
-
-YouTube aggressively blocks server-side requests without proper authentication. The bot uses the `tv_simply` player client by default, which works without a JavaScript runtime and is compatible with cookies-based auth.
-
-#### Cookies (required for most deployments)
-
-**Option 1: Place cookies.txt in project root (easiest)**
-```bash
-# 1. Install "Get cookies.txt LOCALLY" browser extension
-# 2. Open a private/incognito window and log into YouTube
-# 3. Navigate to https://www.youtube.com/robots.txt in the same tab
-# 4. Export cookies using the extension, then close the incognito window
-# 5. Save the content as cookies.txt in the project root
-# 6. Restart the bot
-```
-
-> **Important:** Export cookies from an incognito window that you immediately close afterwards. YouTube rotates cookies on open tabs, which can invalidate exported cookies. See the [yt-dlp cookie guide](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies) for details.
-
-**Option 2: Use environment variable**
-```bash
-# In .env file
-COOKIES_FILE=/path/to/your/cookies.txt
-# or
-YOUTUBE_COOKIES=/path/to/your/cookies.txt
-```
-
-**Option 3: Docker volume mount**
-```bash
-docker run -d --name singerbot \
-  --env-file .env \
-  -v $(pwd)/cookies.txt:/app/cookies.txt \
-  singerbot
-```
-
-The bot will log the cookies file status on startup:
-- ✓ Cookies file found and accessible
-- ✗ Cookies file not found (YouTube may block requests)
-
-See `cookies.txt.example` for more details on the cookie format.
-
-#### Player Client
-
-The `YOUTUBE_CLIENT` env var controls which yt-dlp player client is used. The default `tv_simply` works without a JS runtime. If you encounter issues, try `tv` or `tv_downgraded`. Set to `default` to let yt-dlp choose automatically (requires Node.js or Deno).
-
-#### JavaScript Runtime
-
-The Docker image includes Node.js, which yt-dlp uses to solve YouTube's JS signature challenges. This is configured via `YOUTUBE_JS_RUNTIME=node` (the default). If you need a custom path, set `YOUTUBE_JS_RUNTIME=node:/path/to/node` or pass a JSON dict like `{"node": {"path": "/path/to/node"}}`. If Node.js is not available in your environment, set `YOUTUBE_JS_RUNTIME=` (empty) to disable it — the `tv_simply` client will still work without JS.
 
 ## Architecture
 
@@ -174,6 +121,7 @@ The Docker image includes Node.js, which yt-dlp uses to solve YouTube's JS signa
 - `singerbot/state.py` - In-memory state
 - `singerbot/handlers.py` - Command handlers
 - `singerbot/utils.py` - Helper functions
+- `singerbot/platforms/soundcloud.py` - SoundCloud API client
 
 ## License
 
