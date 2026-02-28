@@ -21,7 +21,7 @@ def _get_yt_opts(base_opts):
     opts = base_opts.copy()
 
     if COOKIES_FILE and os.path.exists(COOKIES_FILE):
-        opts["cookies"] = COOKIES_FILE
+        opts["cookiefile"] = COOKIES_FILE
         logger.info(f"Using cookies file: {COOKIES_FILE}")
     else:
         logger.warning(f"Cookies file not found (expected at: {COOKIES_FILE}), proceeding without cookies")
