@@ -10,9 +10,8 @@ import httpx
 
 from pyrogram.errors import UserNotParticipant
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from pytgcalls.exceptions import GroupCallNotFound
-from pytgcalls.types import AudioPiped
-from pytgcalls.types.input_stream.quality import HighQualityAudio
+from pytgcalls.exceptions import NoActiveGroupCall
+from pytgcalls.types import MediaStream, AudioQuality
 
 from singerbot.config import DOWNLOADS_DIR, RADIO_BATCH
 from singerbot.state import queues, active, radio_mode, ban_users
@@ -293,7 +292,7 @@ async def play_next(cid):
     s = queues[cid].pop(0)
     try:
         state = _init_active_state_for_song(s)
-        stream = AudioPiped(state["file"], HighQualityAudio())
+        stream = MediaStream(state["file"], AudioQuality.HIGH)
         await calls.change_stream(cid, stream)
         active[cid] = state
         await send_now_playing(cid, state, queues.get(cid, []))

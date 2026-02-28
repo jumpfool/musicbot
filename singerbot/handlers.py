@@ -3,8 +3,8 @@ import os
 import time
 from pyrogram import filters
 from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from pytgcalls.types import AudioPiped, Update, HighQualityAudio
-from pytgcalls.exceptions import GroupCallNotFound
+from pytgcalls.types import MediaStream, Update, AudioQuality
+from pytgcalls.exceptions import NoActiveGroupCall
 
 from singerbot.config import ADMIN_ID, RADIO_BATCH
 from singerbot.core import app, calls, logger
@@ -214,7 +214,7 @@ async def play(_, m: Message):
         if cid not in active:
             try:
                 state = _init_active_state_for_song(song)
-                stream = AudioPiped(state["file"], HighQualityAudio())
+                stream = MediaStream(state["file"], AudioQuality.HIGH)
                 try:
                     await calls.join_group_call(cid, stream)
                 except Exception as e:
@@ -228,7 +228,7 @@ async def play(_, m: Message):
                 await msg.delete()
                 await send_now_playing(cid, state, [])
                 logger.info(f"Started: {state['title']}")
-            except GroupCallNotFound:
+            except NoActiveGroupCall:
                 await msg.edit("**no active voice chat found**")
             except Exception as e:
                 logger.error(f"play error: {e}")
@@ -438,10 +438,12 @@ async def radio_handler(_, m: Message):
         except Exception:
             pass
 
-@calls.on_stream_end()
+@calls.on_update()
 async def on_end(_, u: Update):
-    logger.info(f"Stream ended in {u.chat_id}")
-    await play_next(u.chat_id)
+    from pytgcalls.types import StreamAudioEnded
+    if isinstance(u, StreamAudioEnded):
+        logger.info(f"Stream ended in {u.chat_id}")
+        await play_next(u.chat_id)
 
 @app.on_message(filters.command("speedup") & filters.user(ADMIN_ID))
 async def speedup_handler(_, m: Message):
@@ -471,7 +473,7 @@ async def speedup_handler(_, m: Message):
         out = _make_transformed_filename(orig, "speedup")
         factor = 1.2
         await _run_ffmpeg_transform_seek_orig(orig, out, factor, seek=cur_pos, timeout=180)
-        stream = AudioPiped(out, HighQualityAudio())
+        stream = MediaStream(out, AudioQuality.HIGH)
         await calls.change_stream(cid, stream)
         state["file"] = out
         state["base_orig_offset"] = float(cur_pos)
@@ -523,7 +525,7 @@ async def slowed_handler(_, m: Message):
         out = _make_transformed_filename(orig, "slowed")
         factor = 0.85
         await _run_ffmpeg_transform_seek_orig(orig, out, factor, seek=cur_pos, timeout=180)
-        stream = AudioPiped(out, HighQualityAudio())
+        stream = MediaStream(out, AudioQuality.HIGH)
         await calls.change_stream(cid, stream)
         state["file"] = out
         state["base_orig_offset"] = float(cur_pos)
@@ -578,7 +580,7 @@ async def restore_handler(_, m: Message):
         out = _make_transformed_filename(orig, "restored")
         factor = 1.0
         await _run_ffmpeg_transform_seek_orig(orig, out, factor, seek=cur_pos, timeout=180)
-        stream = AudioPiped(out, HighQualityAudio())
+        stream = MediaStream(out, AudioQuality.HIGH)
         await calls.change_stream(cid, stream)
         state["file"] = out
         state["base_orig_offset"] = float(cur_pos)
