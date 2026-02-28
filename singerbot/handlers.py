@@ -13,7 +13,7 @@ from singerbot.utils import (
     is_banned, play_next, download_audio, ensure_assistant_joined,
     send_now_playing, _init_active_state_for_song, video_id_from_url,
     fetch_radio_ids, get_current_orig_position, _make_transformed_filename,
-    _run_ffmpeg_transform_seek_orig, search_youtube
+    _run_ffmpeg_transform_seek_orig, search_youtube, YouTubeAuthError
 )
 
 @app.on_callback_query()
@@ -236,6 +236,17 @@ async def play(_, m: Message):
         else:
             queues[cid].append(song)
             await msg.edit(f"queued: {song['title'][:50].lower()}\nposition: {len(queues[cid])}")
+    except YouTubeAuthError as e:
+        logger.error(f"YouTube auth error: {e}")
+        await msg.edit(
+            "**YouTube Authentication Required**\n\n"
+            "YouTube is blocking requests. Please add cookies:\n"
+            "1. Install 'Get cookies.txt' browser extension\n"
+            "2. Log into YouTube in your browser\n"
+            "3. Export cookies and save as cookies.txt\n"
+            "4. Restart the bot\n\n"
+            "See cookies.txt.example for detailed instructions."
+        )
     except Exception as e:
         logger.error(f"Command error: {e}")
         await msg.edit(f"error: {str(e)[:100]}")
@@ -404,6 +415,14 @@ async def radio_handler(_, m: Message):
                 added_titles.append(title_lower)
                 last_list = "\n".join(f"{i}. {t}" for i, t in enumerate(added_titles[-10:], start=max(1, len(added_titles)-9)))
                 await progress_msg.edit(f"radio: added {len(added_titles)}/{total}\n\n{last_list}")
+            except YouTubeAuthError:
+                radio_mode.discard(cid)
+                await progress_msg.edit(
+                    "**YouTube Authentication Required**\n\n"
+                    "YouTube is blocking requests. Please add cookies and restart the bot.\n"
+                    "See cookies.txt.example for instructions."
+                )
+                return
             except Exception as e:
                 logger.warning(f"radio download failed for {vid}: {e}")
                 await progress_msg.edit(f"radio: added {len(added_titles)}/{total} (errors may have occurred)\n\n" + ("\n".join(added_titles[-10:]) or ""))
