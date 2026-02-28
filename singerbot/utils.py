@@ -13,7 +13,7 @@ from pytgcalls.exceptions import GroupCallNotFound
 from pytgcalls.types import AudioPiped
 from pytgcalls.types.input_stream.quality import HighQualityAudio
 
-from singerbot.config import DOWNLOADS_DIR, RADIO_BATCH, COOKIES_FILE
+from singerbot.config import DOWNLOADS_DIR, RADIO_BATCH, COOKIES_FILE, YOUTUBE_JS_RUNTIME
 from singerbot.state import queues, active, radio_mode, ban_users
 from singerbot.core import app, user, calls, logger
 
@@ -24,6 +24,24 @@ def _get_yt_opts(base_opts):
         logger.info(f"Using cookies file: {COOKIES_FILE}")
     else:
         logger.warning(f"Cookies file not found (expected at: {COOKIES_FILE}), proceeding without cookies")
+    
+    # Configure JS runtime for yt-dlp (helps with YouTube extraction)
+    # Set to "deno" if node is not available in your environment
+    if YOUTUBE_JS_RUNTIME:
+        opts["js_runtimes"] = [YOUTUBE_JS_RUNTIME]
+    
+    # Add YouTube-specific options to bypass bot detection
+    # Use Android client which has fewer restrictions
+    opts.setdefault("extractor_args", {})
+    opts["extractor_args"]["youtube"] = {
+        "player_client": ["android", "web"],
+        "player_skip": ["webpage", "configs", "js"],
+    }
+    
+    # Set a realistic user-agent
+    opts.setdefault("http_headers", {})
+    opts["http_headers"]["User-Agent"] = "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+    
     return opts
 
 def video_id_from_url(url: str):
