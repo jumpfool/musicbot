@@ -2,10 +2,13 @@ import logging
 from pyrogram import Client, errors as pyrogram_errors
 from singerbot.config import API_ID, API_HASH, BOT_TOKEN, SESSION
 
-if not hasattr(pyrogram_errors, "GroupcallForbidden") and hasattr(
-    pyrogram_errors, "GroupCallForbidden"
-):
-    pyrogram_errors.GroupcallForbidden = pyrogram_errors.GroupCallForbidden
+if not hasattr(pyrogram_errors, "GroupcallForbidden"):
+    if hasattr(pyrogram_errors, "GroupCallForbidden"):
+        pyrogram_errors.GroupcallForbidden = pyrogram_errors.GroupCallForbidden
+    else:
+        class GroupcallForbidden(Exception):
+            pass
+        pyrogram_errors.GroupcallForbidden = GroupcallForbidden
 
 from pytgcalls import PyTgCalls
 
