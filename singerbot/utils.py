@@ -18,6 +18,7 @@ from singerbot.state import queues, active, radio_mode, ban_users
 from singerbot.core import app, user, calls, logger
 
 _COOKIES_INCOMPATIBLE_CLIENTS = {"tv_simply", "tv_downgraded"}
+_COOKIES_UNSUPPORTED_CLIENTS = {"ios", "android"}
 _COOKIES_FALLBACK_CLIENT = "mweb"
 
 
@@ -25,11 +26,6 @@ def _get_yt_opts(base_opts, client_override=None):
     opts = base_opts.copy()
 
     cookies_present = COOKIES_FILE and os.path.exists(COOKIES_FILE)
-    if cookies_present:
-        opts["cookiefile"] = COOKIES_FILE
-        logger.info(f"Using cookies file: {COOKIES_FILE}")
-    else:
-        logger.warning(f"Cookies file not found (expected at: {COOKIES_FILE}), proceeding without cookies")
 
     client = client_override if client_override is not None else YOUTUBE_CLIENT
     if cookies_present and client in _COOKIES_INCOMPATIBLE_CLIENTS:
@@ -37,6 +33,14 @@ def _get_yt_opts(base_opts, client_override=None):
             f"Client '{client}' does not support cookies; switching to '{_COOKIES_FALLBACK_CLIENT}'"
         )
         client = _COOKIES_FALLBACK_CLIENT
+
+    if cookies_present and client not in _COOKIES_UNSUPPORTED_CLIENTS:
+        opts["cookiefile"] = COOKIES_FILE
+        logger.info(f"Using cookies file: {COOKIES_FILE}")
+    elif cookies_present:
+        logger.warning(f"Client '{client}' does not support cookies; proceeding without cookies")
+    else:
+        logger.warning(f"Cookies file not found (expected at: {COOKIES_FILE}), proceeding without cookies")
 
     extractor_args = {}
     if client and client != "default":
