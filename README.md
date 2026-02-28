@@ -64,11 +64,16 @@ SingerBot is a Telegram bot that streams audio from YouTube into Telegram voice 
    ADMIN_ID=your_user_id
    ```
 
-4. (Optional) For YouTube access in rate-limited environments, place a `cookies.txt` file in the project root directory
+4. (Optional but recommended) Configure YouTube cookies:
+   - Place a `cookies.txt` file in the project root, or
+   - Set `COOKIES_FILE=/path/to/cookies.txt` in `.env`
 
 5. Run the bot:
-   ```bash   python bot.py
+   ```bash
+   python bot.py
    ```
+
+   The bot will log the cookies file status on startup. If you see "✗ Cookies file not found", YouTube may block your requests.
 
 ## Getting Telegram Credentials
 
@@ -107,8 +112,43 @@ The following environment variables can be configured:
 | `ADMIN_ID` | Admin user ID | - |
 | `LOG_GROUP` | Log group chat ID | - |
 | `RADIO_BATCH` | Number of tracks to fetch in radio mode | 25 |
+| `COOKIES_FILE` | Path to YouTube cookies.txt file | `./cookies.txt` |
+| `YOUTUBE_COOKIES` | Alternative name for cookies file path | `./cookies.txt` |
 
-**Cookies File**: For YouTube access in rate-limited environments, place a `cookies.txt` file in the project root directory (optional)
+### YouTube Cookies Configuration
+
+YouTube may block requests without authentication. To fix this, you need to provide cookies:
+
+**Option 1: Place cookies.txt in project root (easiest)**
+```bash
+# 1. Install "Get cookies.txt" browser extension
+# 2. Go to YouTube and log in
+# 3. Export cookies using the extension
+# 4. Save the content as cookies.txt in the project root
+# 5. Restart the bot
+```
+
+**Option 2: Use environment variable**
+```bash
+# In .env file
+COOKIES_FILE=/path/to/your/cookies.txt
+# or
+YOUTUBE_COOKIES=/path/to/your/cookies.txt
+```
+
+**Option 3: Docker volume mount**
+```bash
+docker run -d --name singerbot \
+  --env-file .env \
+  -v $(pwd)/cookies.txt:/app/cookies.txt \
+  singerbot
+```
+
+The bot will log the cookies file status on startup:
+- ✓ Cookies file found and accessible
+- ✗ Cookies file not found (YouTube may block requests)
+
+See `cookies.txt.example` for more details on the cookie format.
 
 ## Architecture
 
