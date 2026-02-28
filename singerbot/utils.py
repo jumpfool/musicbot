@@ -13,17 +13,30 @@ from pytgcalls.exceptions import GroupCallNotFound
 from pytgcalls.types import AudioPiped
 from pytgcalls.types.input_stream.quality import HighQualityAudio
 
-from singerbot.config import DOWNLOADS_DIR, RADIO_BATCH, COOKIES_FILE
+from singerbot.config import DOWNLOADS_DIR, RADIO_BATCH, COOKIES_FILE, YOUTUBE_CLIENT, YOUTUBE_PO_TOKEN, YOUTUBE_JS_RUNTIME
 from singerbot.state import queues, active, radio_mode, ban_users
 from singerbot.core import app, user, calls, logger
 
 def _get_yt_opts(base_opts):
     opts = base_opts.copy()
+
     if COOKIES_FILE and os.path.exists(COOKIES_FILE):
         opts["cookies"] = COOKIES_FILE
         logger.info(f"Using cookies file: {COOKIES_FILE}")
     else:
         logger.warning(f"Cookies file not found (expected at: {COOKIES_FILE}), proceeding without cookies")
+
+    extractor_args = {}
+    if YOUTUBE_CLIENT and YOUTUBE_CLIENT != "default":
+        extractor_args["player_client"] = [YOUTUBE_CLIENT]
+    if YOUTUBE_PO_TOKEN:
+        extractor_args["po_token"] = [YOUTUBE_PO_TOKEN]
+    if extractor_args:
+        opts["extractor_args"] = {"youtube": extractor_args}
+
+    if YOUTUBE_JS_RUNTIME:
+        opts["js_runtimes"] = YOUTUBE_JS_RUNTIME
+
     return opts
 
 def video_id_from_url(url: str):
