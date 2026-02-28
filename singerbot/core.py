@@ -1,7 +1,13 @@
 import logging
-from pyrogram import Client
-from pytgcalls import PyTgCalls
+from pyrogram import Client, errors as pyrogram_errors
 from singerbot.config import API_ID, API_HASH, BOT_TOKEN, SESSION
+
+if not hasattr(pyrogram_errors, "GroupcallForbidden") and hasattr(
+    pyrogram_errors, "GroupCallForbidden"
+):
+    pyrogram_errors.GroupcallForbidden = pyrogram_errors.GroupCallForbidden
+
+from pytgcalls import PyTgCalls
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
