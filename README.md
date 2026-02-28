@@ -120,7 +120,7 @@ The following environment variables can be configured:
 
 ### YouTube Authentication
 
-YouTube aggressively blocks server-side requests without proper authentication. The bot uses the `mweb` player client by default, which works with cookies and without a JavaScript runtime.
+YouTube aggressively blocks server-side requests without proper authentication. If you see errors like **"Sign in to confirm you're not a bot"** or **"Signature solving failed"**, you need to configure cookies. The bot uses the `mweb` player client by default, which works well with cookies.
 
 #### Cookies (required for most deployments)
 
@@ -174,6 +174,41 @@ The Docker image includes Node.js, which yt-dlp uses to solve YouTube's JS signa
 - `singerbot/state.py` - In-memory state
 - `singerbot/handlers.py` - Command handlers
 - `singerbot/utils.py` - Helper functions
+
+## Troubleshooting
+
+### "Sign in to confirm you're not a bot" Error
+
+This error means YouTube has detected automated access and requires authentication. To fix:
+
+1. **Ensure cookies are configured** - See the [YouTube Authentication](#youtube-authentication) section
+2. **Update your cookies** - Cookies expire periodically; re-export them from your browser
+3. **Use a fresh YouTube account** - Some accounts may have restrictions
+4. **Try incognito method** - Export cookies from an incognito window and close it immediately
+5. **Check yt-dlp version** - Run `pip show yt-dlp` and update if outdated: `pip install -U yt-dlp`
+
+### "Signature solving failed" / "n challenge solving failed"
+
+This indicates the JavaScript runtime isn't working correctly:
+
+1. **Verify Node.js is installed** - Run `node --version`
+2. **Check YOUTUBE_JS_RUNTIME** - Should be `node` or a valid path
+3. **Use mweb client** - Set `YOUTUBE_CLIENT=mweb` (works without JS runtime)
+
+### "Only images are available" Error
+
+The video might not have audio or the format isn't available:
+
+1. **Check the video** - Verify it has audio on YouTube's website
+2. **Try a different video** - Some videos are audio-only streams
+3. **Check client compatibility** - Try `YOUTUBE_CLIENT=web_safari`
+
+### Downloads Are Slow or Failing
+
+1. **Use cookies** - Most reliable fix for rate limiting
+2. **Check your IP** - Your server IP might be flagged by YouTube
+3. **Consider a proxy** - Configure yt-dlp proxy options if needed
+4. **Reduce concurrent downloads** - Limit radio mode batch size with `RADIO_BATCH=10`
 
 ## License
 

@@ -21,6 +21,29 @@ _COOKIES_INCOMPATIBLE_CLIENTS = {"tv_simply", "tv_downgraded"}
 _COOKIES_UNSUPPORTED_CLIENTS = {"ios", "android"}
 _COOKIES_FALLBACK_CLIENT = "mweb"
 
+_AUTH_ERROR_PHRASES = (
+    "sign in to confirm",
+    "confirm you're not a bot",
+    "login required",
+    "authentication required",
+    "not a bot",
+)
+_FORMAT_UNAVAILABLE_PHRASES = (
+    "requested format is not available",
+    "only images are available",
+)
+
+
+class YouTubeAuthError(Exception):
+    """Raised when YouTube requires authentication (cookies needed)."""
+    pass
+
+
+def _check_auth_error(error_msg: str) -> bool:
+    """Check if the error indicates YouTube requires authentication."""
+    err_lower = error_msg.lower()
+    return any(phrase in err_lower for phrase in _AUTH_ERROR_PHRASES)
+
 
 def _get_yt_opts(base_opts, client_override=None):
     opts = base_opts.copy()
@@ -40,7 +63,7 @@ def _get_yt_opts(base_opts, client_override=None):
     elif cookies_present:
         logger.warning(f"Client '{client}' does not support cookies; proceeding without cookies")
     else:
-        logger.warning(f"Cookies file not found (expected at: {COOKIES_FILE}), proceeding without cookies")
+        logger.debug(f"Cookies file not configured (expected at: {COOKIES_FILE})")
 
     extractor_args = {}
     if client and client != "default":
@@ -101,8 +124,7 @@ def clean_artist(title, uploader):
         return re.sub(r"\s*(music|vevo|official).*$", "", uploader, flags=re.IGNORECASE).strip()
     return "unknown"
 
-_FORMAT_UNAVAILABLE_PHRASES = ("requested format is not available", "only images are available")
-_DOWNLOAD_FALLBACK_CLIENTS = ["mweb", "ios", "android"]
+_DOWNLOAD_FALLBACK_CLIENTS = ["mweb", "web_safari", "tv_embedded", "ios", "android"]
 
 
 def _extract_audio_info(ydl, search):
@@ -136,14 +158,20 @@ def download_audio(q):
     search = f"ytsearch:{q}" if not q.startswith("http") else q
     last_exc = None
     tried_clients = set()
+    auth_errors = 0
+    cookies_present = COOKIES_FILE and os.path.exists(COOKIES_FILE)
 
     opts = _get_yt_opts(base_opts)
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             return _extract_audio_info(ydl, search)
     except Exception as exc:
-        err_lower = str(exc).lower()
-        if not any(p in err_lower for p in _FORMAT_UNAVAILABLE_PHRASES):
+        err_str = str(exc)
+        if _check_auth_error(err_str):
+            auth_errors += 1
+            logger.warning(f"download_audio: YouTube requires authentication (cookies needed)")
+        err_lower = err_str.lower()
+        if not any(p in err_lower for p in _FORMAT_UNAVAILABLE_PHRASES) and not _check_auth_error(err_str):
             raise
         last_exc = exc
         current_client = (opts.get("extractor_args", {}).get("youtube", {}).get("player_client") or [None])[0]
@@ -161,11 +189,29 @@ def download_audio(q):
             with yt_dlp.YoutubeDL(opts) as ydl:
                 return _extract_audio_info(ydl, search)
         except Exception as exc:
-            err_lower = str(exc).lower()
-            if not any(p in err_lower for p in _FORMAT_UNAVAILABLE_PHRASES):
+            err_str = str(exc)
+            if _check_auth_error(err_str):
+                auth_errors += 1
+                logger.warning(f"download_audio: YouTube requires authentication with client '{fallback_client}'")
+            err_lower = err_str.lower()
+            if not any(p in err_lower for p in _FORMAT_UNAVAILABLE_PHRASES) and not _check_auth_error(err_str):
                 raise
             last_exc = exc
             logger.warning(f"download_audio: format unavailable with fallback client '{fallback_client}'")
+
+    if auth_errors > 0 and not cookies_present:
+        help_msg = (
+            "YouTube requires authentication. Please provide cookies to download.\n"
+            "Steps:\n"
+            "1. Install 'Get cookies.txt' browser extension\n"
+            "2. Log into YouTube in your browser\n"
+            "3. Export cookies for youtube.com\n"
+            "4. Save as 'cookies.txt' in the project directory\n"
+            "5. Restart the bot\n"
+            "See: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+        )
+        logger.error(help_msg)
+        raise YouTubeAuthError(help_msg) from last_exc
 
     raise last_exc
 
