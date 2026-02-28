@@ -14,4 +14,6 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 DOWNLOADS_DIR = "/tmp/singerbot_cache"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
-COOKIES_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cookies.txt")
+# Cookies file location - can be overridden with COOKIES_FILE or YOUTUBE_COOKIES env var
+_DEFAULT_COOKIES_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cookies.txt")
+COOKIES_FILE = os.getenv("COOKIES_FILE") or os.getenv("YOUTUBE_COOKIES") or _DEFAULT_COOKIES_PATH
