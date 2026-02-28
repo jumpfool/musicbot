@@ -17,3 +17,7 @@ os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 # Cookies file location - can be overridden with COOKIES_FILE or YOUTUBE_COOKIES env var
 _DEFAULT_COOKIES_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cookies.txt")
 COOKIES_FILE = os.getenv("COOKIES_FILE") or os.getenv("YOUTUBE_COOKIES") or _DEFAULT_COOKIES_PATH
+
+# YouTube extraction options
+# JS runtime for yt-dlp (deno, node, etc.) - set to "node" if deno is not available
+YOUTUBE_JS_RUNTIME = os.getenv("YOUTUBE_JS_RUNTIME", "node")
