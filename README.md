@@ -114,13 +114,13 @@ The following environment variables can be configured:
 | `RADIO_BATCH` | Number of tracks to fetch in radio mode | 25 |
 | `COOKIES_FILE` | Path to YouTube cookies.txt file | `./cookies.txt` |
 | `YOUTUBE_COOKIES` | Alternative name for cookies file path | `./cookies.txt` |
-| `YOUTUBE_CLIENT` | yt-dlp player client (`tv_simply`, `tv`, `web`, `android`, `default`, …) | `tv_simply` |
+| `YOUTUBE_CLIENT` | yt-dlp player client (`mweb`, `tv_simply`, `tv`, `web`, `android`, `default`, …) | `mweb` |
 | `YOUTUBE_PO_TOKEN` | PO Token for YouTube requests (advanced, format: `CLIENT.TYPE+TOKEN`) | - |
 | `YOUTUBE_JS_RUNTIME` | JS runtime for yt-dlp signature solving (`node`, `deno`, `node:/path`, or JSON dict) | `node` |
 
 ### YouTube Authentication
 
-YouTube aggressively blocks server-side requests without proper authentication. The bot uses the `tv_simply` player client by default, which works without a JavaScript runtime and is compatible with cookies-based auth.
+YouTube aggressively blocks server-side requests without proper authentication. The bot uses the `mweb` player client by default, which works with cookies and without a JavaScript runtime.
 
 #### Cookies (required for most deployments)
 
@@ -160,11 +160,11 @@ See `cookies.txt.example` for more details on the cookie format.
 
 #### Player Client
 
-The `YOUTUBE_CLIENT` env var controls which yt-dlp player client is used. The default `tv_simply` works without a JS runtime. If you encounter issues, try `tv` or `tv_downgraded`. Set to `default` to let yt-dlp choose automatically (requires Node.js or Deno).
+The `YOUTUBE_CLIENT` env var controls which yt-dlp player client is used. The default `mweb` works with cookies and without a JS runtime. **Do not use `tv_simply` or `tv_downgraded` when cookies are present** — these clients do not support cookies and yt-dlp will skip them entirely, leaving no usable audio formats. The bot will automatically switch these to `mweb` when a cookies file is detected. Set to `default` to let yt-dlp choose automatically (requires Node.js or Deno).
 
 #### JavaScript Runtime
 
-The Docker image includes Node.js, which yt-dlp uses to solve YouTube's JS signature challenges. This is configured via `YOUTUBE_JS_RUNTIME=node` (the default). If you need a custom path, set `YOUTUBE_JS_RUNTIME=node:/path/to/node` or pass a JSON dict like `{"node": {"path": "/path/to/node"}}`. If Node.js is not available in your environment, set `YOUTUBE_JS_RUNTIME=` (empty) to disable it — the `tv_simply` client will still work without JS.
+The Docker image includes Node.js, which yt-dlp uses to solve YouTube's JS signature challenges. This is configured via `YOUTUBE_JS_RUNTIME=node` (the default). If you need a custom path, set `YOUTUBE_JS_RUNTIME=node:/path/to/node` or pass a JSON dict like `{"node": {"path": "/path/to/node"}}`. If Node.js is not available in your environment, set `YOUTUBE_JS_RUNTIME=` (empty) to disable it — the `mweb` client will still work without JS.
 
 ## Architecture
 

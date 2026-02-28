@@ -17,18 +17,30 @@ from singerbot.config import DOWNLOADS_DIR, RADIO_BATCH, COOKIES_FILE, YOUTUBE_C
 from singerbot.state import queues, active, radio_mode, ban_users
 from singerbot.core import app, user, calls, logger
 
-def _get_yt_opts(base_opts):
+_COOKIES_INCOMPATIBLE_CLIENTS = {"tv_simply", "tv_downgraded"}
+_COOKIES_FALLBACK_CLIENT = "mweb"
+
+
+def _get_yt_opts(base_opts, client_override=None):
     opts = base_opts.copy()
 
-    if COOKIES_FILE and os.path.exists(COOKIES_FILE):
+    cookies_present = COOKIES_FILE and os.path.exists(COOKIES_FILE)
+    if cookies_present:
         opts["cookiefile"] = COOKIES_FILE
         logger.info(f"Using cookies file: {COOKIES_FILE}")
     else:
         logger.warning(f"Cookies file not found (expected at: {COOKIES_FILE}), proceeding without cookies")
 
+    client = client_override if client_override is not None else YOUTUBE_CLIENT
+    if cookies_present and client in _COOKIES_INCOMPATIBLE_CLIENTS:
+        logger.warning(
+            f"Client '{client}' does not support cookies; switching to '{_COOKIES_FALLBACK_CLIENT}'"
+        )
+        client = _COOKIES_FALLBACK_CLIENT
+
     extractor_args = {}
-    if YOUTUBE_CLIENT and YOUTUBE_CLIENT != "default":
-        extractor_args["player_client"] = [YOUTUBE_CLIENT]
+    if client and client != "default":
+        extractor_args["player_client"] = [client]
     if YOUTUBE_PO_TOKEN:
         extractor_args["po_token"] = [YOUTUBE_PO_TOKEN]
     if extractor_args:
@@ -85,9 +97,28 @@ def clean_artist(title, uploader):
         return re.sub(r"\s*(music|vevo|official).*$", "", uploader, flags=re.IGNORECASE).strip()
     return "unknown"
 
+_FORMAT_UNAVAILABLE_PHRASES = ("requested format is not available", "only images are available")
+_DOWNLOAD_FALLBACK_CLIENTS = ["mweb", "ios", "android"]
+
+
+def _extract_audio_info(ydl, search):
+    i = ydl.extract_info(search, download=True)
+    if "entries" in i:
+        i = i["entries"][0]
+    filename = ydl.prepare_filename(i).rsplit(".", 1)[0] + ".mp3"
+    return {
+        "file": filename,
+        "title": i.get("title", "unknown"),
+        "artist": clean_artist(i.get("title", ""), i.get("uploader", "")),
+        "duration": i.get("duration", 0),
+        "thumb": i.get("thumbnail") or "https://telegra.ph/file/2f7debf856695e0a17296.png",
+        "webpage": i.get("webpage_url", ""),
+    }
+
+
 def download_audio(q):
-    opts = {
-        "format": "bestaudio",
+    base_opts = {
+        "format": "bestaudio/bestaudio*",
         "outtmpl": f"{DOWNLOADS_DIR}/%(id)s.%(ext)s",
         "quiet": True,
         "postprocessors": [
@@ -99,20 +130,40 @@ def download_audio(q):
         ],
     }
     search = f"ytsearch:{q}" if not q.startswith("http") else q
-    opts = _get_yt_opts(opts)
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        i = ydl.extract_info(search, download=True)
-        if "entries" in i:
-            i = i["entries"][0]
-        filename = ydl.prepare_filename(i).rsplit(".", 1)[0] + ".mp3"
-        return {
-            "file": filename,
-            "title": i.get("title", "unknown"),
-            "artist": clean_artist(i.get("title", ""), i.get("uploader", "")),
-            "duration": i.get("duration", 0),
-            "thumb": i.get("thumbnail") or "https://telegra.ph/file/2f7debf856695e0a17296.png",
-            "webpage": i.get("webpage_url", ""),
-        }
+    last_exc = None
+    tried_clients = set()
+
+    opts = _get_yt_opts(base_opts)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return _extract_audio_info(ydl, search)
+    except Exception as exc:
+        err_lower = str(exc).lower()
+        if not any(p in err_lower for p in _FORMAT_UNAVAILABLE_PHRASES):
+            raise
+        last_exc = exc
+        current_client = (opts.get("extractor_args", {}).get("youtube", {}).get("player_client") or [None])[0]
+        if current_client:
+            tried_clients.add(current_client)
+        logger.warning(f"download_audio: format unavailable with client '{current_client}', trying fallbacks")
+
+    for fallback_client in _DOWNLOAD_FALLBACK_CLIENTS:
+        if fallback_client in tried_clients:
+            continue
+        tried_clients.add(fallback_client)
+        logger.info(f"download_audio: retrying with client '{fallback_client}'")
+        opts = _get_yt_opts(base_opts, client_override=fallback_client)
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return _extract_audio_info(ydl, search)
+        except Exception as exc:
+            err_lower = str(exc).lower()
+            if not any(p in err_lower for p in _FORMAT_UNAVAILABLE_PHRASES):
+                raise
+            last_exc = exc
+            logger.warning(f"download_audio: format unavailable with fallback client '{fallback_client}'")
+
+    raise last_exc
 
 async def ensure_radio_filled(cid):
     if cid not in radio_mode:
