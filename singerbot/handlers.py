@@ -11,9 +11,9 @@ from singerbot.core import app, calls, logger
 from singerbot.state import active, queues, ban_users, radio_mode
 from singerbot.utils import (
     is_banned, play_next, download_audio, ensure_assistant_joined,
-    send_now_playing, _init_active_state_for_song, video_id_from_url,
+    send_now_playing, _init_active_state_for_song, sc_id_from_song,
     fetch_radio_ids, get_current_orig_position, _make_transformed_filename,
-    _run_ffmpeg_transform_seek_orig, search_youtube
+    _run_ffmpeg_transform_seek_orig, search_soundcloud_tracks,
 )
 
 @app.on_callback_query()
@@ -26,10 +26,10 @@ async def callback_handler(_, query: CallbackQuery):
     if uid and is_banned(uid):
         try:
             await query.answer("You are banned and cannot use this bot.", show_alert=True)
-        except:
+        except Exception:
             try:
                 await query.answer()
-            except:
+            except Exception:
                 pass
         return
     data = query.data
@@ -43,7 +43,7 @@ async def callback_handler(_, query: CallbackQuery):
                 active[cid]["paused_at"] = time.time()
             await query.answer("paused", show_alert=False)
             await app.send_message(cid, f"{name} paused")
-        except:
+        except Exception:
             await query.answer("cant pause", show_alert=True)
     elif data == "resume":
         try:
@@ -56,7 +56,7 @@ async def callback_handler(_, query: CallbackQuery):
                 active[cid]["paused"] = False
             await query.answer("resumed", show_alert=False)
             await app.send_message(cid, f"{name} resumed")
-        except:
+        except Exception:
             await query.answer("cant resume", show_alert=True)
     elif data == "skip":
         if cid in active:
@@ -75,7 +75,7 @@ async def callback_handler(_, query: CallbackQuery):
             await query.answer("stopped", show_alert=False)
             await query.message.edit_caption("**stopped**")
             await app.send_message(cid, f"{name} stopped")
-        except:
+        except Exception:
             await query.answer("not in call", show_alert=True)
 
 @app.on_message(filters.command("start"))
@@ -105,7 +105,7 @@ async def start(_, m: Message):
     )
     try:
         await m.reply_photo("https://telegra.ph/file/2f7debf856695e0a17296.png", caption=text, reply_markup=buttons)
-    except:
+    except Exception:
         await m.reply(text, reply_markup=buttons)
 
 @app.on_callback_query(filters.regex("help"))
@@ -166,7 +166,7 @@ async def search_handler(_, m: Message):
     query = m.text.split(None, 1)[1]
     msg = await m.reply("**searching...**")
     try:
-        results = await asyncio.to_thread(search_youtube, query)
+        results = await search_soundcloud_tracks(query)
         if not results:
             return await msg.edit("no results found")
         text = "**search results**\n\n"
@@ -191,7 +191,7 @@ async def play(_, m: Message):
             if len(parts) < 3:
                 return await m.reply("usage: `/play [group_id] [song]`")
             q = parts[2]
-        except:
+        except Exception:
             cid = m.chat.id
             q = m.text.split(None, 1)[1]
     else:
@@ -204,11 +204,11 @@ async def play(_, m: Message):
             if target_chat.type in ["group", "supergroup"]:
                 if not await ensure_assistant_joined(cid):
                     return await msg.edit("bot needs admin to invite assistant")
-        except:
+        except Exception:
             if cid != m.chat.id:
                 return await msg.edit("bot is not in that group or id is wrong")
         await msg.edit("**downloading...**")
-        song = await asyncio.to_thread(download_audio, q)
+        song = await download_audio(q)
         if cid not in queues:
             queues[cid] = []
         if cid not in active:
@@ -250,7 +250,7 @@ async def skip(_, m: Message):
         try:
             target_chat = await app.get_chat(m.command[1])
             cid = target_chat.id
-        except:
+        except Exception:
             pass
     if cid in active:
         await m.reply("**skipped**")
@@ -268,7 +268,7 @@ async def pause(_, m: Message):
         try:
             target_chat = await app.get_chat(m.command[1])
             cid = target_chat.id
-        except:
+        except Exception:
             pass
     try:
         await calls.pause_stream(cid)
@@ -276,7 +276,7 @@ async def pause(_, m: Message):
             active[cid]["paused"] = True
             active[cid]["paused_at"] = time.time()
         await m.reply("**paused**")
-    except:
+    except Exception:
         await m.reply("not playing")
 
 @app.on_message(filters.command("resume"))
@@ -289,7 +289,7 @@ async def resume(_, m: Message):
         try:
             target_chat = await app.get_chat(m.command[1])
             cid = target_chat.id
-        except:
+        except Exception:
             pass
     try:
         await calls.resume_stream(cid)
@@ -300,7 +300,7 @@ async def resume(_, m: Message):
                 active[cid]["stream_start_time"] = time.time() - elapsed
             active[cid]["paused"] = False
         await m.reply("**resumed**")
-    except:
+    except Exception:
         await m.reply("not paused")
 
 @app.on_message(filters.command(["stop", "end"]))
@@ -313,7 +313,7 @@ async def stop(_, m: Message):
         try:
             target_chat = await app.get_chat(m.command[1])
             cid = target_chat.id
-        except:
+        except Exception:
             pass
     try:
         await calls.leave_group_call(cid)
@@ -322,7 +322,7 @@ async def stop(_, m: Message):
         if cid in active:
             del active[cid]
         await m.reply("**stopped**")
-    except:
+    except Exception:
         await m.reply("not in call")
 
 @app.on_message(filters.command("queue"))
@@ -335,7 +335,7 @@ async def queue(_, m: Message):
         try:
             target_chat = await app.get_chat(m.command[1])
             cid = target_chat.id
-        except:
+        except Exception:
             pass
     if cid not in active:
         return await m.reply("nothing playing")
@@ -367,45 +367,60 @@ async def radio_handler(_, m: Message):
     radio_mode.add(cid)
     queues.setdefault(cid, [])
     progress_msg = await m.reply("radio: fetching similar tracks...")
-    seed_vid = None
+    seed_id = None
     if cid in active:
-        seed_vid = video_id_from_url(active[cid].get("webpage"))
-    if not seed_vid and queues.get(cid):
-        seed_vid = video_id_from_url(queues[cid][0].get("webpage"))
-    if not seed_vid:
+        seed_id = active[cid].get("sc_id")
+    if not seed_id and queues.get(cid):
+        seed_id = queues[cid][0].get("sc_id")
+    if not seed_id:
         radio_mode.discard(cid)
-        await progress_msg.edit("cannot enable radio: no reference youtube track found. start playing a youtube song first.")
+        await progress_msg.edit("cannot enable radio: no reference soundcloud track found. start playing a song first.")
         return
     try:
-        ids = await asyncio.to_thread(fetch_radio_ids, seed_vid, RADIO_BATCH)
+        ids = await fetch_radio_ids(seed_id, RADIO_BATCH)
         if not ids:
             radio_mode.discard(cid)
             await progress_msg.edit("radio: no similar tracks found")
             return
         added_titles = []
         total = len(ids)
-        for idx, vid in enumerate(ids, 1):
+        existing_ids = {s.get("sc_id") for s in queues.get(cid, [])}
+        from singerbot.platforms.soundcloud import get_track as sc_get_track, get_stream_url as sc_get_stream_url
+        from singerbot.config import DOWNLOADS_DIR
+        from singerbot.utils import _download_to_file
+        for idx, rid in enumerate(ids, 1):
             if cid not in radio_mode:
                 break
-            skip = False
-            for q in queues.get(cid, []):
-                wp = (q.get("webpage") or "")
-                if wp.endswith(vid) or vid in wp:
-                    skip = True
-                    break
-            if skip:
+            if rid in existing_ids:
                 await progress_msg.edit(f"radio: added {len(added_titles)}/{total} (skipping duplicate)\n\n" + ("\n".join(added_titles[-10:]) or ""))
                 continue
-            url = f"https://www.youtube.com/watch?v={vid}"
             try:
-                song = await asyncio.to_thread(download_audio, url)
+                track = await sc_get_track(rid)
+                if not track:
+                    continue
+                stream_url = await sc_get_stream_url(track["id"])
+                if not stream_url:
+                    continue
+                dest = os.path.join(DOWNLOADS_DIR, f"sc_{track['id']}.mp3")
+                if not os.path.exists(dest):
+                    await _download_to_file(stream_url, dest)
+                song = {
+                    "file": dest,
+                    "title": track["title"],
+                    "artist": track["artist"],
+                    "duration": track["duration"],
+                    "thumb": track.get("thumb") or "https://telegra.ph/file/2f7debf856695e0a17296.png",
+                    "webpage": track.get("webpage", ""),
+                    "sc_id": track["id"],
+                }
                 queues[cid].append(song)
+                existing_ids.add(track["id"])
                 title_lower = (song.get("title") or "unknown").lower()
                 added_titles.append(title_lower)
-                last_list = "\n".join(f"{i}. {t}" for i, t in enumerate(added_titles[-10:], start=max(1, len(added_titles)-9)))
+                last_list = "\n".join(f"{i}. {t}" for i, t in enumerate(added_titles[-10:], start=max(1, len(added_titles) - 9)))
                 await progress_msg.edit(f"radio: added {len(added_titles)}/{total}\n\n{last_list}")
             except Exception as e:
-                logger.warning(f"radio download failed for {vid}: {e}")
+                logger.warning(f"radio download failed for id {rid}: {e}")
                 await progress_msg.edit(f"radio: added {len(added_titles)}/{total} (errors may have occurred)\n\n" + ("\n".join(added_titles[-10:]) or ""))
             await asyncio.sleep(1)
         if cid in radio_mode:
@@ -420,7 +435,7 @@ async def radio_handler(_, m: Message):
         logger.error(f"radio_handler seed failed: {e}")
         try:
             await progress_msg.edit("radio failed to fetch tracks")
-        except:
+        except Exception:
             pass
 
 @calls.on_stream_end()
@@ -441,7 +456,7 @@ async def speedup_handler(_, m: Message):
             try:
                 target = await app.get_chat(maybe)
                 cid = target.id
-            except:
+            except Exception:
                 pass
     if cid not in active:
         return await m.reply("nothing is playing in the target chat")
@@ -463,7 +478,7 @@ async def speedup_handler(_, m: Message):
         state["stream_start_time"] = time.time()
         state["paused"] = False
         state["play_factor"] = float(factor)
-        state["title"] = f"{state.get('title','unknown')} (speedup)"
+        state["title"] = f"{state.get('title', 'unknown')} (speedup)"
         await notice.delete()
         if m.reply_to_message and m.reply_to_message.from_user:
             ru = m.reply_to_message.from_user
@@ -475,7 +490,7 @@ async def speedup_handler(_, m: Message):
     except Exception as e:
         try:
             await notice.delete()
-        except:
+        except Exception:
             pass
         logger.error(f"speedup failed: {e}")
         await m.reply(f"error applying speedup: {e}")
@@ -493,7 +508,7 @@ async def slowed_handler(_, m: Message):
             try:
                 target = await app.get_chat(maybe)
                 cid = target.id
-            except:
+            except Exception:
                 pass
     if cid not in active:
         return await m.reply("nothing is playing in the target chat")
@@ -515,7 +530,7 @@ async def slowed_handler(_, m: Message):
         state["stream_start_time"] = time.time()
         state["paused"] = False
         state["play_factor"] = float(factor)
-        state["title"] = f"{state.get('title','unknown')} (slowed)"
+        state["title"] = f"{state.get('title', 'unknown')} (slowed)"
         await notice.delete()
         if m.reply_to_message and m.reply_to_message.from_user:
             ru = m.reply_to_message.from_user
@@ -527,7 +542,7 @@ async def slowed_handler(_, m: Message):
     except Exception as e:
         try:
             await notice.delete()
-        except:
+        except Exception:
             pass
         logger.error(f"slowed failed: {e}")
         await m.reply(f"error applying slowed: {e}")
@@ -545,7 +560,7 @@ async def restore_handler(_, m: Message):
             try:
                 target = await app.get_chat(maybe)
                 cid = target.id
-            except:
+            except Exception:
                 pass
     if cid not in active:
         return await m.reply("nothing is playing in the target chat")
@@ -557,7 +572,7 @@ async def restore_handler(_, m: Message):
         if not orig or not os.path.exists(orig):
             try:
                 await notice.delete()
-            except:
+            except Exception:
                 pass
             return await m.reply("original file not available for restore")
         out = _make_transformed_filename(orig, "restored")
@@ -574,7 +589,7 @@ async def restore_handler(_, m: Message):
         state["title"] = f"{base_title} (restored)"
         try:
             await notice.delete()
-        except:
+        except Exception:
             pass
         if m.reply_to_message and m.reply_to_message.from_user:
             ru = m.reply_to_message.from_user
@@ -586,7 +601,7 @@ async def restore_handler(_, m: Message):
     except Exception as e:
         try:
             await notice.delete()
-        except:
+        except Exception:
             pass
         logger.error(f"restore failed: {e}")
         await m.reply(f"error restoring: {e}")
