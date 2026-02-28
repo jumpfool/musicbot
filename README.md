@@ -114,19 +114,27 @@ The following environment variables can be configured:
 | `RADIO_BATCH` | Number of tracks to fetch in radio mode | 25 |
 | `COOKIES_FILE` | Path to YouTube cookies.txt file | `./cookies.txt` |
 | `YOUTUBE_COOKIES` | Alternative name for cookies file path | `./cookies.txt` |
+| `YOUTUBE_CLIENT` | yt-dlp player client (`tv_simply`, `tv`, `web`, `android`, `default`, …) | `tv_simply` |
+| `YOUTUBE_PO_TOKEN` | PO Token for YouTube requests (advanced, format: `CLIENT.TYPE+TOKEN`) | - |
+| `YOUTUBE_JS_RUNTIME` | JS runtime for yt-dlp signature solving (`node`, `deno`, or empty) | `node` |
 
-### YouTube Cookies Configuration
+### YouTube Authentication
 
-YouTube may block requests without authentication. To fix this, you need to provide cookies:
+YouTube aggressively blocks server-side requests without proper authentication. The bot uses the `tv_simply` player client by default, which works without a JavaScript runtime and is compatible with cookies-based auth.
+
+#### Cookies (required for most deployments)
 
 **Option 1: Place cookies.txt in project root (easiest)**
 ```bash
-# 1. Install "Get cookies.txt" browser extension
-# 2. Go to YouTube and log in
-# 3. Export cookies using the extension
-# 4. Save the content as cookies.txt in the project root
-# 5. Restart the bot
+# 1. Install "Get cookies.txt LOCALLY" browser extension
+# 2. Open a private/incognito window and log into YouTube
+# 3. Navigate to https://www.youtube.com/robots.txt in the same tab
+# 4. Export cookies using the extension, then close the incognito window
+# 5. Save the content as cookies.txt in the project root
+# 6. Restart the bot
 ```
+
+> **Important:** Export cookies from an incognito window that you immediately close afterwards. YouTube rotates cookies on open tabs, which can invalidate exported cookies. See the [yt-dlp cookie guide](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies) for details.
 
 **Option 2: Use environment variable**
 ```bash
@@ -149,6 +157,14 @@ The bot will log the cookies file status on startup:
 - ✗ Cookies file not found (YouTube may block requests)
 
 See `cookies.txt.example` for more details on the cookie format.
+
+#### Player Client
+
+The `YOUTUBE_CLIENT` env var controls which yt-dlp player client is used. The default `tv_simply` works without a JS runtime. If you encounter issues, try `tv` or `tv_downgraded`. Set to `default` to let yt-dlp choose automatically (requires Node.js or Deno).
+
+#### JavaScript Runtime
+
+The Docker image includes Node.js, which yt-dlp uses to solve YouTube's JS signature challenges. This is configured via `YOUTUBE_JS_RUNTIME=node` (the default). If Node.js is not available in your environment, set `YOUTUBE_JS_RUNTIME=` (empty) to disable it — the `tv_simply` client will still work without JS.
 
 ## Architecture
 

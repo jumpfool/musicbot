@@ -17,3 +17,15 @@ os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 # Cookies file location - can be overridden with COOKIES_FILE or YOUTUBE_COOKIES env var
 _DEFAULT_COOKIES_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cookies.txt")
 COOKIES_FILE = os.getenv("COOKIES_FILE") or os.getenv("YOUTUBE_COOKIES") or _DEFAULT_COOKIES_PATH
+
+# YouTube player client override - defaults to tv_simply which works without a JS runtime
+# and is compatible with cookies-based auth. Set to "default" to let yt-dlp decide.
+YOUTUBE_CLIENT = os.getenv("YOUTUBE_CLIENT", "tv_simply")
+
+# Optional PO Token for YouTube requests. Format: "CLIENT.TYPE+TOKEN_VALUE"
+# e.g. "mweb.player+TOKEN" - see https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide
+YOUTUBE_PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN", "")
+
+# JS runtime for yt-dlp signature decryption. Node.js is installed in the Docker image.
+# Set to empty string to disable (falls back to yt-dlp built-in interpreter).
+YOUTUBE_JS_RUNTIME = os.getenv("YOUTUBE_JS_RUNTIME", "node")

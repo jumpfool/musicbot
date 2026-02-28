@@ -1,11 +1,10 @@
 from singerbot.core import app, user, calls, logger
 from pyrogram import idle
 import singerbot.handlers
-from singerbot.config import COOKIES_FILE
+from singerbot.config import COOKIES_FILE, YOUTUBE_CLIENT, YOUTUBE_JS_RUNTIME, YOUTUBE_PO_TOKEN
 import os
 
 async def main():
-    # Log cookies file status on startup
     if COOKIES_FILE:
         logger.info(f"Checking for cookies file at: {COOKIES_FILE}")
         if os.path.exists(COOKIES_FILE):
@@ -20,6 +19,11 @@ async def main():
             logger.warning(f"  YouTube may block requests without cookies. See cookies.txt.example for setup instructions.")
     else:
         logger.warning("COOKIES_FILE path is not configured")
+
+    logger.info(f"YouTube player client: {YOUTUBE_CLIENT or 'default (yt-dlp auto)'}")
+    logger.info(f"YouTube JS runtime: {YOUTUBE_JS_RUNTIME or 'disabled'}")
+    if YOUTUBE_PO_TOKEN:
+        logger.info("YouTube PO Token: configured")
 
     await app.start()
     await user.start()
