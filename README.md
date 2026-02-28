@@ -116,7 +116,7 @@ The following environment variables can be configured:
 | `YOUTUBE_COOKIES` | Alternative name for cookies file path | `./cookies.txt` |
 | `YOUTUBE_CLIENT` | yt-dlp player client (`tv_simply`, `tv`, `web`, `android`, `default`, …) | `tv_simply` |
 | `YOUTUBE_PO_TOKEN` | PO Token for YouTube requests (advanced, format: `CLIENT.TYPE+TOKEN`) | - |
-| `YOUTUBE_JS_RUNTIME` | JS runtime for yt-dlp signature solving (`node`, `deno`, or empty) | `node` |
+| `YOUTUBE_JS_RUNTIME` | JS runtime for yt-dlp signature solving (`node`, `deno`, `node:/path`, or JSON dict) | `node` |
 
 ### YouTube Authentication
 
@@ -164,7 +164,7 @@ The `YOUTUBE_CLIENT` env var controls which yt-dlp player client is used. The de
 
 #### JavaScript Runtime
 
-The Docker image includes Node.js, which yt-dlp uses to solve YouTube's JS signature challenges. This is configured via `YOUTUBE_JS_RUNTIME=node` (the default). If Node.js is not available in your environment, set `YOUTUBE_JS_RUNTIME=` (empty) to disable it — the `tv_simply` client will still work without JS.
+The Docker image includes Node.js, which yt-dlp uses to solve YouTube's JS signature challenges. This is configured via `YOUTUBE_JS_RUNTIME=node` (the default). If you need a custom path, set `YOUTUBE_JS_RUNTIME=node:/path/to/node` or pass a JSON dict like `{"node": {"path": "/path/to/node"}}`. If Node.js is not available in your environment, set `YOUTUBE_JS_RUNTIME=` (empty) to disable it — the `tv_simply` client will still work without JS.
 
 ## Architecture
 

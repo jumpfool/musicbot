@@ -1,4 +1,5 @@
 import os
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,6 +27,27 @@ YOUTUBE_CLIENT = os.getenv("YOUTUBE_CLIENT", "tv_simply")
 # e.g. "mweb.player+TOKEN" - see https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide
 YOUTUBE_PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN", "")
 
+def _parse_js_runtime(value: str | None):
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed
+    if ":" in raw:
+        runtime, _, path = raw.partition(":")
+        runtime = runtime.strip()
+        path = path.strip()
+        if runtime and path:
+            return {runtime: {"path": path}}
+    return {raw: {}}
+
 # JS runtime for yt-dlp signature decryption. Node.js is installed in the Docker image.
 # Set to empty string to disable (falls back to yt-dlp built-in interpreter).
-YOUTUBE_JS_RUNTIME = os.getenv("YOUTUBE_JS_RUNTIME", "node")
+YOUTUBE_JS_RUNTIME = _parse_js_runtime(os.getenv("YOUTUBE_JS_RUNTIME", "node"))
